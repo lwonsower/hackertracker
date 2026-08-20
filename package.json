@@ -1,0 +1,16 @@
+{
+  "name": "hackertracker",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "setup": "npm install && npm --prefix frontend install",
+    "dev": "concurrently -n vite,go -c magenta,cyan \"npm --prefix frontend run dev\" \"npm run dev:go\"",
+    "dev:go": "cd backend && go run .",
+    "build": "npm --prefix frontend run build && npm run build:go",
+    "build:go": "cd backend && go build -o backend .",
+    "typecheck": "npm --prefix frontend run typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}

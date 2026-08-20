@@ -1,0 +1,48 @@
+/*
+ * Design tokens. Everything visual should reference a variable from here
+ * rather than a literal value, so the whole app can be re-themed in one file.
+ */
+
+:root {
+  /* Surfaces — near-black rather than pure black, which reads less harsh */
+  --color-bg: #0b0b10;
+  --color-surface: #14141c;
+  --color-surface-raised: #1c1c26;
+
+  /* Text */
+  --color-text: #eceaf2;
+  --color-text-muted: #9a97a8;
+  --color-text-faint: #625f70;
+
+  /* Accent */
+  --color-accent: #b8a1ff;
+  --color-accent-dim: #6d5da8;
+
+  /* Lines */
+  --color-border: #262633;
+
+  /* Type */
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial,
+    sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.75rem;
+  --text-2xl: 2.5rem;
+
+  --tracking-wide: 0.08em;
+
+  /* Spacing — 4px scale */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+
+  --radius: 8px;
+}
