@@ -38,11 +38,14 @@ h3 {
 
 /* Layout */
 
-.shell {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: var(--space-8);
+.page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-6) var(--space-12);
+}
+
+.page__header {
+  margin-bottom: var(--space-8);
 }
 
 .wordmark {
@@ -50,4 +53,204 @@ h3 {
   font-weight: 400;
   letter-spacing: var(--tracking-wide);
   color: var(--color-text);
+}
+
+.page__tagline {
+  margin-top: var(--space-2);
+  color: var(--color-text-muted);
+}
+
+.layout {
+  display: grid;
+  gap: var(--space-6);
+  align-items: start;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 60rem) {
+  .layout {
+    grid-template-columns: 22rem minmax(0, 1fr);
+  }
+
+  .layout > .panel:first-child {
+    position: sticky;
+    top: var(--space-8);
+  }
+}
+
+/* Panels */
+
+.panel {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-6);
+}
+
+.panel__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-lg);
+  font-weight: 500;
+}
+
+.panel__hint {
+  margin-top: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.counter {
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-faint);
+}
+
+/* Form */
+
+.form {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-6);
+}
+
+.field-row {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+}
+
+.field {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.field__label {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.field__optional {
+  color: var(--color-text-faint);
+}
+
+.field__input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  color: var(--color-text);
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.field__input--area {
+  resize: vertical;
+  font-size: var(--text-sm);
+}
+
+.field__input:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.button {
+  justify-self: start;
+  padding: var(--space-2) var(--space-4);
+  font: inherit;
+  color: var(--color-bg);
+  background-color: var(--color-accent);
+  border: 0;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.button:disabled {
+  background-color: var(--color-accent-dim);
+  cursor: not-allowed;
+}
+
+.alert {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  background-color: var(--color-surface-raised);
+  border-left: 2px solid var(--color-accent);
+  border-radius: var(--radius);
+}
+
+/* Timeline */
+
+.timeline,
+.timeline__events {
+  list-style: none;
+  padding: 0;
+}
+
+.timeline {
+  margin-top: var(--space-6);
+  display: grid;
+  gap: var(--space-6);
+}
+
+.timeline__date {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.timeline__events {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.event {
+  padding: var(--space-3);
+  background-color: var(--color-surface-raised);
+  border-radius: var(--radius);
+}
+
+.event__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.badge {
+  padding: 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--color-accent);
+  border: 1px solid var(--color-accent-dim);
+  border-radius: var(--radius);
+}
+
+.event__time,
+.event__source {
+  color: var(--color-text-faint);
+  font-size: 0.75rem;
+}
+
+.event__title {
+  margin-top: var(--space-2);
+}
+
+.event__link {
+  color: var(--color-text);
+  text-decoration-color: var(--color-accent-dim);
+  text-underline-offset: 2px;
+}
+
+.event__note {
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  white-space: pre-wrap;
 }

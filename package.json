@@ -3,12 +3,18 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "setup": "npm install && npm --prefix frontend install",
+    "setup": "npm install && npm --prefix frontend install && npm run deps:go",
+    "deps:go": "cd backend && go mod tidy",
+    "db:up": "docker compose up -d db",
+    "db:down": "docker compose down",
+    "db:reset": "docker compose down -v && docker compose up -d db",
+    "db:psql": "docker compose exec db psql -U hackertracker -d hackertracker",
     "dev": "concurrently -n vite,go -c magenta,cyan \"npm --prefix frontend run dev\" \"npm run dev:go\"",
     "dev:go": "cd backend && go run .",
     "build": "npm --prefix frontend run build && npm run build:go",
     "build:go": "cd backend && go build -o backend .",
-    "typecheck": "npm --prefix frontend run typecheck"
+    "typecheck": "npm --prefix frontend run typecheck",
+    "vet": "cd backend && go vet ./..."
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

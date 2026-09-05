@@ -1,0 +1,36 @@
+# Postgres is the only service you need for day-to-day development: run
+#   docker compose up -d
+# and then `npm run dev` on the host, which is far faster to iterate on than
+# rebuilding an image. The full stack (app included) is behind a profile:
+#   docker compose --profile app up --build
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hackertracker}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hackertracker}
+      POSTGRES_DB: ${POSTGRES_DB:-hackertracker}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hackertracker} -d ${POSTGRES_DB:-hackertracker}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    profiles: ["app"]
+    build: .
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-hackertracker}:${POSTGRES_PASSWORD:-hackertracker}@db:5432/${POSTGRES_DB:-hackertracker}?sslmode=disable
+      PORT: "8080"
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
