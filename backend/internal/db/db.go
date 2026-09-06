@@ -18,7 +18,13 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-const DefaultURL = "postgres://hackertracker:hackertracker@localhost:5432/hackertracker?sslmode=disable"
+const DefaultURL = "postgres://hackertracker:hackertracker@localhost:5442/hackertracker?sslmode=disable"
+
+// connectTimeout is how long to wait for Postgres to start accepting
+// connections. Compose brings the database up alongside the app, so a boot
+// that gives up immediately is the difference between "works" and "crashloops
+// until you restart it by hand".
+const connectTimeout = 30 * time.Second
 
 // Connect opens a pool and waits for the database to answer. Compose starts
 // Postgres and the app together, so a few seconds of retrying on boot is the
@@ -29,14 +35,22 @@ func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("open pool: %w", err)
 	}
 
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(connectTimeout)
 	for {
 		if err = pool.Ping(ctx); err == nil {
 			return pool, nil
 		}
 		if time.Now().After(deadline) || ctx.Err() != nil {
 			pool.Close()
-			return nil, fmt.Errorf("database unreachable at %s: %w", redact(url), err)
+			return nil, fmt.Errorf(
+				"could not reach Postgres at %s after %s.\n"+
+					"  Start it with:  npm run db:up\n"+
+					"  Check it with:  docker compose ps\n"+
+					"  If a role or database is reported missing, something else is\n"+
+					"  listening on that port (often a local Postgres install) --\n"+
+					"  change POSTGRES_PORT in .env, or point DATABASE_URL elsewhere.\n"+
+					"  last error: %w",
+				redact(url), connectTimeout, err)
 		}
 		select {
 		case <-ctx.Done():

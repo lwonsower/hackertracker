@@ -2,3 +2,7 @@
 node_modules/
 backend/backend
 backend/web/assets/
+.env.local
+.env.*.local
+!.env.example
+!.env.local.example

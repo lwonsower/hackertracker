@@ -11,7 +11,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hackertracker}
       POSTGRES_DB: ${POSTGRES_DB:-hackertracker}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      # Deliberately not 5432. A Homebrew or Postgres.app install already
+      # owns that on many machines, and colliding there fails in a genuinely
+      # confusing way: the app connects to the *other* Postgres and reports a
+      # missing role rather than a missing server.
+      - "${POSTGRES_PORT:-5442}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -23,6 +27,13 @@ services:
   app:
     profiles: ["app"]
     build: .
+    # Compose natively reads .env for substitution above, but not .env.local,
+    # and neither reaches the container unless passed in explicitly.
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.local
+        required: false
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-hackertracker}:${POSTGRES_PASSWORD:-hackertracker}@db:5432/${POSTGRES_DB:-hackertracker}?sslmode=disable
       PORT: "8080"

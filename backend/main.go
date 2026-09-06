@@ -23,10 +23,14 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/lwonsower/hackertracker/backend/internal/connectors/github"
+	"github.com/lwonsower/hackertracker/backend/internal/core"
+	"github.com/lwonsower/hackertracker/backend/internal/dotenv"
 	"github.com/lwonsower/hackertracker/backend/internal/db"
 	"github.com/lwonsower/hackertracker/backend/internal/httpapi"
 	"github.com/lwonsower/hackertracker/backend/internal/ingest"
 	"github.com/lwonsower/hackertracker/backend/internal/store"
+	"github.com/lwonsower/hackertracker/backend/internal/syncer"
 )
 
 // web holds Vite's production output, which is why the directory name matches
@@ -50,23 +54,47 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Before anything reads the environment. .env.local is listed first so it
+	// wins over .env, and neither overrides a variable that is already set.
+	for _, path := range dotenv.Load(".env.local", ".env") {
+		log.Printf("loaded configuration from %s", path)
+	}
+
 	port := envOr("PORT", defaultPort)
 	databaseURL := envOr("DATABASE_URL", db.DefaultURL)
 
-	// Migrate before opening the pool: if the schema can't be brought up to
-	// date, failing here is far easier to diagnose than a query failing later.
-	if err := db.Migrate(ctx, databaseURL); err != nil {
-		return err
-	}
-
+	// Connect first. Connect is the step that waits for Postgres to accept
+	// connections, so migrating ahead of it would blow past that wait and fail
+	// instantly whenever the database is merely still starting up — which,
+	// under `npm run dev`, is most of the time.
 	pool, err := db.Connect(ctx, databaseURL)
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
 
+	// Then migrate, before serving a single request: a query failing against a
+	// stale schema is far harder to diagnose than failing here.
+	if err := db.Migrate(ctx, databaseURL); err != nil {
+		return err
+	}
+
 	st := store.New(pool)
 	pipeline := ingest.New(st)
+
+	// GitHub payloads are not envelopes, so they get their own normaliser.
+	// Registering it separately from the connector means raw_records can be
+	// re-normalised later without credentials.
+	pipeline.Register("github", github.Normalizer{})
+
+	runner := syncer.New(st, pipeline)
+	runner.Register("github", func(acct store.SourceAccount, token string) (core.Fetcher, error) {
+		return github.New(github.Config{
+			Login:   acct.ExternalAccountID,
+			Token:   token,
+			BaseURL: os.Getenv("GITHUB_API_BASE_URL"), // empty means api.github.com
+		})
+	})
 
 	// Manual entry is just another source account, so hand-typed events carry
 	// the same provenance as anything captured automatically.
@@ -82,7 +110,7 @@ func run() error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealthz(pool))
-	httpapi.New(st, pipeline, manual).Routes(mux)
+	httpapi.New(st, pipeline, runner, manual).Routes(mux)
 	mux.Handle("GET /", spaHandler(static))
 
 	srv := &http.Server{
@@ -102,6 +130,23 @@ func run() error {
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			log.Printf("graceful shutdown failed: %v", err)
+		}
+	}()
+
+	// Sync once at startup, off the critical path so a slow or unreachable
+	// upstream never delays serving.
+	go func() {
+		reports, err := runner.SyncAll(ctx)
+		if err != nil {
+			log.Printf("startup sync: %v", err)
+			return
+		}
+		for _, rep := range reports {
+			log.Printf("startup sync %s: %d new, %d updated, complete=%t",
+				rep.Label, rep.Created, rep.Updated, rep.Complete)
+			for _, note := range rep.Notes {
+				log.Printf("  note: %s", note)
+			}
 		}
 	}()
 

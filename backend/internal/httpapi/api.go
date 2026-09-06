@@ -16,13 +16,17 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/lwonsower/hackertracker/backend/internal/connectors/github"
 	"github.com/lwonsower/hackertracker/backend/internal/core"
 	"github.com/lwonsower/hackertracker/backend/internal/ingest"
+	"github.com/lwonsower/hackertracker/backend/internal/secrets"
 	"github.com/lwonsower/hackertracker/backend/internal/store"
+	"github.com/lwonsower/hackertracker/backend/internal/syncer"
 )
 
 const (
@@ -34,11 +38,12 @@ const (
 type API struct {
 	store    *store.Store
 	pipeline *ingest.Pipeline
+	runner   *syncer.Runner
 	manual   store.SourceAccount
 }
 
-func New(st *store.Store, p *ingest.Pipeline, manual store.SourceAccount) *API {
-	return &API{store: st, pipeline: p, manual: manual}
+func New(st *store.Store, p *ingest.Pipeline, run *syncer.Runner, manual store.SourceAccount) *API {
+	return &API{store: st, pipeline: p, runner: run, manual: manual}
 }
 
 func (a *API) Routes(mux *http.ServeMux) {
@@ -47,6 +52,7 @@ func (a *API) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/events", a.handleListEvents)
 	mux.HandleFunc("GET /api/source-accounts", a.handleListSourceAccounts)
 	mux.HandleFunc("POST /api/source-accounts", a.handleCreateSourceAccount)
+	mux.HandleFunc("POST /api/source-accounts/{id}/sync", a.handleSync)
 }
 
 // ── generic ingest ───────────────────────────────────────────────────────
@@ -278,8 +284,10 @@ func (a *API) handleListSourceAccounts(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleCreateSourceAccount(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Label  string `json:"label"`
-		Source string `json:"source"`
+		Label          string `json:"label"`
+		Source         string `json:"source"`
+		Mode           string `json:"mode"`
+		CredentialsRef string `json:"credentials_ref"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, maxBodyBytes)).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "could not read request body as JSON")
@@ -291,6 +299,10 @@ func (a *API) handleCreateSourceAccount(w http.ResponseWriter, r *http.Request) 
 	}
 	if in.Source == "" {
 		in.Source = "webhook"
+	}
+	if in.Mode == "pull" {
+		a.createPullAccount(w, r, in.Source, in.Label, in.CredentialsRef)
+		return
 	}
 
 	acct, token, err := a.store.CreatePushEndpoint(r.Context(), in.Source, in.Label)
@@ -312,6 +324,86 @@ func (a *API) handleCreateSourceAccount(w http.ResponseWriter, r *http.Request) 
 		"ingest_url":     fmt.Sprintf("%s://%s/api/ingest/%s", scheme, r.Host, token),
 		"note":           "Store this token now; it is not recoverable.",
 	})
+}
+
+// createPullAccount connects a polling source, verifying the credentials
+// before storing anything.
+//
+// Verifying up front matters more than it looks: the characteristic GitHub
+// failure is a token that authenticates fine but can see nothing, which
+// produces syncs that succeed and return zero events. Failing at connect time
+// with a real login echoed back is the difference between "it works" and "it
+// appears to work".
+func (a *API) createPullAccount(w http.ResponseWriter, r *http.Request, source, label, credentialsRef string) {
+	if source != "github" {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("no pull connector for source %q", source))
+		return
+	}
+	if credentialsRef == "" {
+		writeError(w, http.StatusBadRequest,
+			"credentials_ref is required, e.g. env:GITHUB_TOKEN (a pointer to an environment variable, never the token itself)")
+		return
+	}
+
+	token, err := secrets.Resolve(credentialsRef)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	login, err := github.WhoAmI(r.Context(), token, os.Getenv("GITHUB_API_BASE_URL"))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	acct, err := a.store.CreatePullAccount(r.Context(), source, label, login, credentialsRef)
+	if err != nil {
+		log.Printf("create pull account: %v", err)
+		writeError(w, http.StatusInternalServerError, "could not save the source account")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"source_account": acct,
+		"login":          login,
+	})
+}
+
+func (a *API) handleSync(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "not a valid source account id")
+		return
+	}
+
+	acct, err := a.store.SourceAccountByID(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "no such source account")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not load the source account")
+		return
+	}
+	if acct.Mode != "pull" {
+		writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("%q is a %s source; only pull sources can be synced", acct.Label, acct.Mode))
+		return
+	}
+
+	// The request context governs the sync, so navigating away cancels it.
+	// That is safe: progress is checkpointed to the cursor between rounds, so
+	// the next run resumes rather than restarting.
+	report, err := a.runner.Sync(r.Context(), acct)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"error":  err.Error(),
+			"report": report,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────

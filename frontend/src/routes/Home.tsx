@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { createEvent, listEvents, type EventRow } from '../api'
+import Sources from '../components/Sources'
 
 // Suggestions, not a fixed list — the input stays free text. The ones that
 // matter most here are the kinds no API will ever hand you.
@@ -117,6 +118,7 @@ export default function Home() {
       </header>
 
       <div className="layout">
+        <div className="column">
         <section className="panel" aria-labelledby="capture-heading">
           <h2 id="capture-heading" className="panel__title">
             Capture
@@ -198,6 +200,9 @@ export default function Home() {
             </button>
           </form>
         </section>
+
+        <Sources onSynced={() => void refresh()} />
+        </div>
 
         <section className="panel" aria-labelledby="timeline-heading">
           <h2 id="timeline-heading" className="panel__title">

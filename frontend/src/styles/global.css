@@ -72,10 +72,16 @@ h3 {
     grid-template-columns: 22rem minmax(0, 1fr);
   }
 
-  .layout > .panel:first-child {
+  .column {
     position: sticky;
     top: var(--space-8);
   }
+}
+
+.column {
+  display: grid;
+  gap: var(--space-6);
+  align-content: start;
 }
 
 /* Panels */
@@ -253,4 +259,104 @@ h3 {
   font-size: var(--text-sm);
   color: var(--color-text-muted);
   white-space: pre-wrap;
+}
+
+/* Sources */
+
+.sources {
+  list-style: none;
+  padding: 0;
+  margin-top: var(--space-6);
+  display: grid;
+  gap: var(--space-3);
+}
+
+.source {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+  padding: var(--space-3);
+  background-color: var(--color-surface-raised);
+  border-radius: var(--radius);
+}
+
+.source__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.source__label {
+  font-size: var(--text-sm);
+}
+
+.source__meta {
+  font-size: 0.75rem;
+  color: var(--color-text-faint);
+}
+
+.source__report {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+
+.button--quiet {
+  color: var(--color-text);
+  background-color: transparent;
+  border: 1px solid var(--color-border);
+  font-size: var(--text-sm);
+}
+
+.button--quiet:hover:not(:disabled) {
+  border-color: var(--color-accent-dim);
+}
+
+.button--quiet:disabled {
+  background-color: transparent;
+  color: var(--color-text-faint);
+}
+
+.field__prefixed {
+  display: flex;
+  align-items: stretch;
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.field__prefixed:focus-within {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.field__prefix {
+  display: grid;
+  place-items: center;
+  padding-inline: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--color-text-faint);
+  border-right: 1px solid var(--color-border);
+}
+
+/* The input already sits inside the bordered wrapper. */
+.field__prefixed .field__input {
+  border: 0;
+  border-radius: 0;
+  background-color: transparent;
+}
+
+.field__prefixed .field__input:focus-visible {
+  outline: none;
+}
+
+.field__help {
+  font-size: 0.75rem;
+  color: var(--color-text-faint);
+}
+
+.field__help code {
+  font-family: var(--font-mono);
+  color: var(--color-text-muted);
 }
