@@ -41,8 +41,13 @@ type Runner struct {
 	// silently. Overlapping costs nothing: re-ingesting is a no-op.
 	overlap time.Duration
 
-	// backfill is how far the very first sync reaches.
-	backfill time.Duration
+	// BackfillYears is how far the very first sync reaches.
+	//
+	// Ten rather than one: this tool exists to reconstruct a career's evidence,
+	// and someone whose last merged pull request was two years ago still needs
+	// it. A one-year default silently returned nothing for exactly that case.
+	// Year-sized search windows keep the cost of the wider default low.
+	BackfillYears int
 
 	// maxRounds bounds one Sync call. Fetchers return a cursor and expect to be
 	// called repeatedly; this stops a bug in one from looping forever.
@@ -54,9 +59,9 @@ func New(st *store.Store, p *ingest.Pipeline) *Runner {
 		store:     st,
 		pipeline:  p,
 		builders:  map[string]BuildFunc{},
-		overlap:   24 * time.Hour,
-		backfill:  365 * 24 * time.Hour,
-		maxRounds: 64,
+		overlap:       24 * time.Hour,
+		BackfillYears: 10,
+		maxRounds:     128,
 	}
 }
 
@@ -78,7 +83,15 @@ type Report struct {
 	Notes           []string       `json:"notes,omitempty"`
 }
 
-func (r *Runner) Sync(ctx context.Context, acct store.SourceAccount) (Report, error) {
+// Options tunes a single run.
+type Options struct {
+	// Since overrides where a backfill starts. Set when the user asks for a
+	// specific range; nil means "since the last success, or the default
+	// backfill if there has never been one".
+	Since *time.Time
+}
+
+func (r *Runner) Sync(ctx context.Context, acct store.SourceAccount, opts Options) (Report, error) {
 	report := Report{SourceAccountID: acct.ID, Label: acct.Label}
 
 	build, ok := r.builders[acct.Source]
@@ -97,9 +110,14 @@ func (r *Runner) Sync(ctx context.Context, acct store.SourceAccount) (Report, er
 	}
 
 	startedAt := time.Now().UTC()
-	since := startedAt.Add(-r.backfill)
+	since := startedAt.AddDate(-r.BackfillYears, 0, 0)
 	if state.LastSyncedAt != nil {
 		since = state.LastSyncedAt.Add(-r.overlap)
+	}
+	// An explicit request wins over both, which is how you re-reach history
+	// that a previous successful sync has already moved the watermark past.
+	if opts.Since != nil {
+		since = opts.Since.UTC()
 	}
 	report.Since = since
 
@@ -166,7 +184,7 @@ func (r *Runner) SyncAll(ctx context.Context) ([]Report, error) {
 
 	reports := make([]Report, 0, len(accounts))
 	for _, acct := range accounts {
-		report, err := r.Sync(ctx, acct)
+		report, err := r.Sync(ctx, acct, Options{})
 		if err != nil {
 			report.Notes = append(report.Notes, err.Error())
 			log.Printf("sync %s: %v", acct.Label, err)
@@ -191,11 +209,19 @@ func notes(r Report) []string {
 	if r.Created+r.Updated == 0 {
 		// The quiet failure this whole design guards against: a token that can
 		// see nothing produces a successful-looking sync with no events.
+		//
+		// Naming the window first, because "nothing in this range" is the more
+		// common cause and the cheaper one to check. An earlier version led
+		// with scopes and SSO, which sent someone hunting a permissions problem
+		// when their most recent merged pull request was simply older than the
+		// range being searched.
 		out = append(out, fmt.Sprintf(
-			"Matched nothing across %d queries. If you expected results, check the token "+
-				"can see the repositories you have in mind — private repos need repo scope, "+
-				"and organisations with SSO must authorise the token explicitly.",
-			r.Examined["queries_issued"]))
+			"Matched nothing across %d queries, searching back to %s. "+
+				"If your work is older than that, sync again with an earlier start date. "+
+				"Otherwise check the token can see the repositories you have in mind — "+
+				"private repos need access granted, and organisations with SSO must "+
+				"authorise the token explicitly.",
+			r.Examined["queries_issued"], r.Since.Format("2 January 2006")))
 	}
 	if !r.Complete {
 		out = append(out, "Stopped before finishing the backfill. Run sync again to continue where it left off.")
@@ -203,6 +229,10 @@ func notes(r Report) []string {
 	if n := r.Examined["windows_truncated"]; n > 0 {
 		out = append(out, fmt.Sprintf(
 			"%d month(s) hit GitHub's 1,000-result cap, so some records in those months were not returned.", n))
+	}
+	if n := r.Examined["windows_split"]; n > 0 {
+		out = append(out, fmt.Sprintf(
+			"%d year(s) held more than one query can return and were re-fetched month by month.", n))
 	}
 	return out
 }

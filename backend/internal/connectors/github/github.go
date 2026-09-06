@@ -33,7 +33,7 @@ const (
 
 	// Bounded work per Sync call, so a long backfill makes steady progress and
 	// can resume rather than restarting. The runner calls Sync in a loop.
-	defaultWindowsPerSync = 6
+	defaultWindowsPerSync = 4
 )
 
 // streamMerged and streamReviewed are the two searches run per month window.
@@ -42,6 +42,8 @@ const (
 const (
 	streamMerged   = "merged"
 	streamReviewed = "reviewed"
+
+	dateFormat = "2006-01-02"
 )
 
 // Normalizer converts GitHub search items into events.
@@ -135,16 +137,26 @@ func (c *Connector) SyncStats() map[string]int {
 	return out
 }
 
-// task is one search: one calendar month, one stream.
+// task is one search window for one stream.
+//
+// Windows are calendar YEARS, not months. Monthly windows were sized for the
+// worst case — a prolific author brushing the 1,000-result cap — and made a
+// ten-year backfill 240 paced queries, about eight minutes. Since the API hands
+// back total_count on the first page, density can be measured instead of
+// assumed: a year that overflows is redone month by month, and one that doesn't
+// costs a single query.
 type task struct {
-	start  time.Time
 	stream string
+	start  time.Time
+	end    time.Time
 }
 
 // cursor marks the next task to run, so an interrupted backfill resumes.
+// Streams are walked one after the other, each chronologically, so a stream
+// plus a start date identifies a position unambiguously.
 type cursor struct {
-	From   string `json:"from"` // YYYY-MM-DD, start of the month window
 	Stream string `json:"stream"`
+	From   string `json:"from"` // YYYY-MM-DD
 }
 
 // Sync fetches a bounded number of month windows and returns a cursor when
@@ -182,8 +194,8 @@ func (c *Connector) Sync(ctx context.Context, since time.Time, cur string) ([]co
 	for i := start; i < len(tasks); i++ {
 		if i-start >= c.windowsPerSync {
 			next, err := json.Marshal(cursor{
-				From:   tasks[i].start.Format("2006-01-02"),
 				Stream: tasks[i].stream,
+				From:   tasks[i].start.Format(dateFormat),
 			})
 			if err != nil {
 				return records, "", err
@@ -191,83 +203,131 @@ func (c *Connector) Sync(ctx context.Context, since time.Time, cur string) ([]co
 			return records, string(next), nil
 		}
 
-		found, err := c.runTask(ctx, tasks[i], until)
+		found, err := c.runTask(ctx, tasks[i])
 		if err != nil {
 			return nil, "", err
 		}
 		records = append(records, found...)
-		c.stats["windows_searched"]++
 	}
 
 	return records, "", nil
 }
 
-// buildTasks produces one task per (calendar month x stream), oldest first.
-// Starting at the first of the month means the earliest window reaches back
-// before `since`. That overlap is intentional and free.
+// buildTasks produces one task per (calendar year x stream), oldest first,
+// with each stream walked to completion before the next begins.
+//
+// Starting at 1 January means the earliest window reaches back before `since`.
+// That overlap is intentional and free: re-ingesting is a no-op.
 func buildTasks(since, until time.Time) []task {
 	if since.After(until) {
 		return nil
 	}
 
 	var tasks []task
-	month := time.Date(since.Year(), since.Month(), 1, 0, 0, 0, 0, time.UTC)
-	for !month.After(until) {
-		tasks = append(tasks,
-			task{start: month, stream: streamMerged},
-			task{start: month, stream: streamReviewed},
-		)
-		month = month.AddDate(0, 1, 0)
+	for _, stream := range []string{streamMerged, streamReviewed} {
+		year := time.Date(since.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+		for !year.After(until) {
+			end := year.AddDate(1, 0, 0).AddDate(0, 0, -1)
+			if end.After(until) {
+				end = until
+			}
+			tasks = append(tasks, task{stream: stream, start: year, end: end})
+			year = year.AddDate(1, 0, 0)
+		}
 	}
 	return tasks
 }
 
 func indexOf(tasks []task, c cursor) int {
 	for i, t := range tasks {
-		if t.stream == c.Stream && t.start.Format("2006-01-02") == c.From {
+		if t.stream == c.Stream && t.start.Format(dateFormat) == c.From {
 			return i
 		}
 	}
 	return 0
 }
 
-func (c *Connector) runTask(ctx context.Context, t task, until time.Time) ([]core.RawRecord, error) {
-	last := t.start.AddDate(0, 1, 0).AddDate(0, 0, -1)
-	if last.After(until) {
-		last = until
+// runTask fetches one year window, falling back to month windows when the year
+// holds more than a single query can return.
+func (c *Connector) runTask(ctx context.Context, t task) ([]core.RawRecord, error) {
+	records, total, err := c.fetchRange(ctx, t.stream, t.start, t.end)
+	if err != nil {
+		return nil, err
 	}
-	q := c.query(t.stream, t.start, last)
+	if total <= maxResultsPerQuery {
+		c.stats["windows_searched"]++
+		return records, nil
+	}
 
+	// Denser than one query can express, so discard the partial year and redo
+	// it a month at a time. Costs one wasted probe, only for dense windows.
+	c.stats["windows_split"]++
 	var out []core.RawRecord
-	for page := 1; page <= maxPages; page++ {
-		items, err := c.search(ctx, q, page)
+	for month := startOfMonth(t.start); !month.After(t.end); month = month.AddDate(0, 1, 0) {
+		start, end := month, month.AddDate(0, 1, 0).AddDate(0, 0, -1)
+		if start.Before(t.start) {
+			start = t.start
+		}
+		if end.After(t.end) {
+			end = t.end
+		}
+
+		found, monthTotal, err := c.fetchRange(ctx, t.stream, start, end)
 		if err != nil {
 			return nil, err
 		}
-
-		for _, item := range items {
-			rec, ok := rawRecord(t.stream, item)
-			if !ok {
-				continue
-			}
-			out = append(out, rec)
-		}
-		c.stats["records_fetched"] += len(items)
-
-		if len(items) < perPage {
-			return out, nil
-		}
-		if page == maxPages {
-			// More than 1,000 results in a single month means silent data loss.
-			// Surface it rather than pretending the window is complete.
+		if monthTotal > maxResultsPerQuery {
+			// A single month over the cap cannot be subdivided further here,
+			// so records are being lost. Say so rather than reporting success.
 			c.stats["windows_truncated"]++
 		}
+		out = append(out, found...)
+		c.stats["windows_searched"]++
 	}
 	return out, nil
 }
 
+// fetchRange pages through one query, also reporting the total the search
+// claims to match — which is how density is measured without guessing.
+func (c *Connector) fetchRange(ctx context.Context, stream string, from, to time.Time) ([]core.RawRecord, int, error) {
+	q := c.query(stream, from, to)
+
+	var out []core.RawRecord
+	total := 0
+	for page := 1; page <= maxPages; page++ {
+		items, count, err := c.search(ctx, q, page)
+		if err != nil {
+			return nil, 0, err
+		}
+		if page == 1 {
+			total = count
+			// The caller is about to discard this and re-query by month, so
+			// paging the rest of an oversized window would be wasted requests.
+			if total > maxResultsPerQuery {
+				return nil, total, nil
+			}
+		}
+
+		for _, item := range items {
+			if rec, ok := rawRecord(stream, item); ok {
+				out = append(out, rec)
+			}
+		}
+		c.stats["records_fetched"] += len(items)
+
+		if len(items) < perPage {
+			break
+		}
+	}
+	return out, total, nil
+}
+
+func startOfMonth(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+}
+
 func (c *Connector) query(stream string, from, to time.Time) string {
-	window := from.Format("2006-01-02") + ".." + to.Format("2006-01-02")
+	window := from.Format(dateFormat) + ".." + to.Format(dateFormat)
 	switch stream {
 	case streamMerged:
 		return fmt.Sprintf("is:pr author:%s is:merged merged:%s", c.login, window)
@@ -283,9 +343,9 @@ type searchResponse struct {
 	Items      []json.RawMessage `json:"items"`
 }
 
-func (c *Connector) search(ctx context.Context, q string, page int) ([]json.RawMessage, error) {
+func (c *Connector) search(ctx context.Context, q string, page int) ([]json.RawMessage, int, error) {
 	if err := c.pace(ctx); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	params := url.Values{}
@@ -299,7 +359,7 @@ func (c *Connector) search(ctx context.Context, q string, page int) ([]json.RawM
 	endpoint := c.baseURL + "/search/issues?" + params.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
@@ -307,21 +367,21 @@ func (c *Connector) search(ctx context.Context, q string, page int) ([]json.RawM
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("github search: %w", err)
+		return nil, 0, fmt.Errorf("github search: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	c.stats["queries_issued"]++
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, describeFailure(resp)
+		return nil, 0, describeFailure(resp)
 	}
 
 	var parsed searchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, fmt.Errorf("github search: could not decode response: %w", err)
+		return nil, 0, fmt.Errorf("github search: could not decode response: %w", err)
 	}
-	return parsed.Items, nil
+	return parsed.Items, parsed.TotalCount, nil
 }
 
 // pace spaces requests to stay inside 30/minute without tracking headers.

@@ -26,11 +26,16 @@ function looksLikeCredential(value: string): boolean {
   return CREDENTIAL_PREFIXES.test(value) || value.length > MAX_NAME_LENGTH
 }
 
-/** A one-line summary of what a sync examined, not just what it produced. */
+/**
+ * A one-line summary of what a sync examined, not just what it produced —
+ * including the date it searched back to, which is the first thing you want
+ * when a sync returns nothing.
+ */
 function summarise(report: SyncReport): string {
   const parts = [`${report.created} new`, `${report.updated} updated`]
   const queries = report.examined?.queries_issued
   if (queries) parts.push(`${queries} queries`)
+  if (report.since) parts.push(`back to ${report.since.slice(0, 10)}`)
   if (!report.complete) parts.push('more remaining')
   return parts.join(' · ')
 }
@@ -42,6 +47,7 @@ export default function Sources({ onSynced }: { onSynced: () => void }) {
   const [connecting, setConnecting] = useState(false)
   const [connectError, setConnectError] = useState<string | null>(null)
   const [syncing, setSyncing] = useState<string | null>(null)
+  const [since, setSince] = useState('')
   const [reports, setReports] = useState<Record<string, SyncReport>>({})
   const [syncErrors, setSyncErrors] = useState<Record<string, string>>({})
 
@@ -93,7 +99,7 @@ export default function Sources({ onSynced }: { onSynced: () => void }) {
     setSyncing(id)
     setSyncErrors((prev) => ({ ...prev, [id]: '' }))
     try {
-      const report = await syncSource(id)
+      const report = await syncSource(id, since || undefined)
       setReports((prev) => ({ ...prev, [id]: report }))
       await refresh()
       onSynced()
@@ -150,6 +156,22 @@ export default function Sources({ onSynced }: { onSynced: () => void }) {
           {connecting ? 'Verifying…' : 'Connect GitHub'}
         </button>
       </form>
+
+      <label className="field sources__since">
+        <span className="field__label">
+          Backfill from <span className="field__optional">optional</span>
+        </span>
+        <input
+          className="field__input"
+          type="date"
+          value={since}
+          onChange={(e) => setSince(e.target.value)}
+        />
+        <span className="field__help">
+          Leave empty to continue from the last successful sync, or ten years back on a
+          first run. Set a date to reach further back.
+        </span>
+      </label>
 
       <ul className="sources">
         {sources.map((source) => {
