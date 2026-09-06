@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,31 +36,52 @@ func item(number int, merged bool) string {
 }
 
 type stub struct {
-	server  *httptest.Server
+	server *httptest.Server
+
+	mu      sync.Mutex
 	queries []string
+}
+
+func (s *stub) seen() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.queries...)
+}
+
+// newStubWith lets a test decide what each query matches, which is how window
+// density can be simulated.
+func newStubWith(t *testing.T, respond func(q string, page int) (total int, items []string)) *stub {
+	t.Helper()
+	s := &stub{}
+	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		page := 1
+		fmt.Sscanf(r.URL.Query().Get("page"), "%d", &page)
+
+		s.mu.Lock()
+		s.queries = append(s.queries, q)
+		s.mu.Unlock()
+
+		total, items := respond(q, page)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"total_count":%d,"items":[%s]}`, total, strings.Join(items, ","))
+	}))
+	t.Cleanup(s.server.Close)
+	return s
 }
 
 // newStub answers every search with `count` items on the first page.
 func newStub(t *testing.T, count int) *stub {
-	t.Helper()
-	s := &stub{}
-	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		s.queries = append(s.queries, q.Get("q"))
-
-		n := count
-		if q.Get("page") != "1" {
-			n = 0
+	return newStubWith(t, func(_ string, page int) (int, []string) {
+		if page != 1 {
+			return count, nil
 		}
-		items := make([]string, 0, n)
-		for i := 0; i < n; i++ {
+		items := make([]string, 0, count)
+		for i := 0; i < count; i++ {
 			items = append(items, item(1000+i, true))
 		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"total_count":%d,"items":[%s]}`, n, strings.Join(items, ","))
-	}))
-	t.Cleanup(s.server.Close)
-	return s
+		return count, items
+	})
 }
 
 func newConnector(t *testing.T, base string, windows int) *Connector {
@@ -78,41 +101,135 @@ func newConnector(t *testing.T, base string, windows int) *Connector {
 	return c
 }
 
-// Jan 15 to Mar 10 spans three calendar months, and each month is searched
-// twice (merged and reviewed), so six windows.
-func TestSyncCoversOneQueryPerMonthPerStream(t *testing.T) {
+var rangePattern = regexp.MustCompile(`(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})`)
+
+// spansMoreThanAMonth tells a year-sized query from a month-sized one.
+func spansMoreThanAMonth(t *testing.T, q string) bool {
+	t.Helper()
+	m := rangePattern.FindStringSubmatch(q)
+	if m == nil {
+		t.Fatalf("query has no date range: %q", q)
+	}
+	from, err := time.Parse(dateFormat, m[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	to, err := time.Parse(dateFormat, m[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return to.Sub(from) > 40*24*time.Hour
+}
+
+// 2024-06 to 2026-03 spans three calendar years, each searched twice.
+func TestSyncUsesYearWindows(t *testing.T) {
 	s := newStub(t, 1)
 	c := newConnector(t, s.server.URL, 10)
 
-	since := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
-	records, cursor, err := c.Sync(context.Background(), since, "")
+	since := time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC)
+	records, next, err := c.Sync(context.Background(), since, "")
 	if err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	if cursor != "" {
-		t.Errorf("expected the run to complete, got cursor %q", cursor)
+	if next != "" {
+		t.Errorf("expected the run to complete, got cursor %q", next)
 	}
-	if len(s.queries) != 6 {
-		t.Errorf("expected 6 queries (3 months x 2 streams), got %d: %v", len(s.queries), s.queries)
+
+	queries := s.seen()
+	if len(queries) != 6 {
+		t.Errorf("expected 6 queries (3 years x 2 streams), got %d: %v", len(queries), queries)
 	}
 	if len(records) != 6 {
 		t.Errorf("expected 6 records, got %d", len(records))
 	}
-
-	// Windows must be month-bounded, which is what keeps each query under
-	// GitHub's 1,000-result cap.
-	if !strings.Contains(s.queries[0], "merged:2026-01-01..2026-01-31") {
-		t.Errorf("first query is not month-bounded: %q", s.queries[0])
+	if !strings.Contains(queries[0], "merged:2024-01-01..2024-12-31") {
+		t.Errorf("first window should be a whole year: %q", queries[0])
 	}
-	if !strings.Contains(s.queries[0], "author:testuser is:merged") {
-		t.Errorf("merged stream query is wrong: %q", s.queries[0])
+	if !strings.Contains(queries[0], "author:testuser is:merged") {
+		t.Errorf("merged stream query is wrong: %q", queries[0])
+	}
+	// Streams run one after the other, so the merged stream finishes first.
+	if strings.Contains(queries[1], "reviewed-by") {
+		t.Errorf("expected the merged stream to complete before reviewed: %q", queries[1])
 	}
 	// Your own PRs are excluded from the review stream so they aren't counted twice.
-	if !strings.Contains(s.queries[1], "reviewed-by:testuser -author:testuser") {
-		t.Errorf("reviewed stream query is wrong: %q", s.queries[1])
+	if !strings.Contains(queries[3], "reviewed-by:testuser -author:testuser") {
+		t.Errorf("reviewed stream query is wrong: %q", queries[3])
 	}
-	if stats := c.SyncStats(); stats["windows_searched"] != 6 {
-		t.Errorf("expected 6 windows searched, got %d", stats["windows_searched"])
+}
+
+// The whole point of year windows: a decade of history should not cost a
+// query per month when the data is sparse.
+func TestTenYearBackfillIsCheapWhenSparse(t *testing.T) {
+	s := newStub(t, 1)
+	c := newConnector(t, s.server.URL, 100)
+
+	since := time.Date(2016, 3, 10, 0, 0, 0, 0, time.UTC)
+	if _, _, err := c.Sync(context.Background(), since, ""); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	// 2016..2026 inclusive is 11 years, two streams.
+	if got := len(s.seen()); got != 22 {
+		t.Errorf("expected 22 queries for an 11-year sparse backfill, got %d", got)
+	}
+}
+
+// A year holding more than one query can return must be re-fetched by month,
+// or records are silently lost.
+func TestDenseYearSplitsIntoMonths(t *testing.T) {
+	s := newStubWith(t, func(q string, page int) (int, []string) {
+		if spansMoreThanAMonth(t, q) {
+			// Too dense to express in one query.
+			return 5000, []string{item(1, true)}
+		}
+		if page != 1 {
+			return 1, nil
+		}
+		return 1, []string{item(1, true)}
+	})
+	c := newConnector(t, s.server.URL, 10)
+
+	since := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	records, _, err := c.Sync(context.Background(), since, "")
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	stats := c.SyncStats()
+	if stats["windows_split"] != 2 {
+		t.Errorf("both streams' year windows should have split, got %d", stats["windows_split"])
+	}
+	// "now" is 10 March, so the year window covers January to March: one probe
+	// plus three month queries, per stream.
+	if got := len(s.seen()); got != 8 {
+		t.Errorf("expected 8 queries (2 probes + 6 months), got %d", got)
+	}
+	if len(records) != 6 {
+		t.Errorf("expected 6 records from the month windows, got %d", len(records))
+	}
+	if stats["windows_truncated"] != 0 {
+		t.Errorf("months were not over the cap; nothing should be truncated")
+	}
+}
+
+// A single month over the cap cannot be subdivided further, so it must be
+// reported rather than passed off as complete.
+func TestMonthOverCapIsReportedAsTruncated(t *testing.T) {
+	s := newStubWith(t, func(_ string, page int) (int, []string) {
+		if page != 1 {
+			return 5000, nil
+		}
+		return 5000, []string{item(1, true)}
+	})
+	c := newConnector(t, s.server.URL, 10)
+
+	since := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if _, _, err := c.Sync(context.Background(), since, ""); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if n := c.SyncStats()["windows_truncated"]; n == 0 {
+		t.Error("expected truncation to be reported when a month exceeds the cap")
 	}
 }
 
@@ -122,36 +239,34 @@ func TestSyncResumesFromCursor(t *testing.T) {
 	s := newStub(t, 1)
 	c := newConnector(t, s.server.URL, 2)
 
-	since := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
-	_, cursor, err := c.Sync(context.Background(), since, "")
+	since := time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC)
+	_, next, err := c.Sync(context.Background(), since, "")
 	if err != nil {
 		t.Fatalf("first Sync: %v", err)
 	}
-	if cursor == "" {
+	if next == "" {
 		t.Fatal("expected a cursor after a bounded run")
 	}
-	if len(s.queries) != 2 {
-		t.Fatalf("expected 2 queries in the first round, got %d", len(s.queries))
+	if got := len(s.seen()); got != 2 {
+		t.Fatalf("expected 2 queries in the first round, got %d", got)
 	}
 
-	var parsed struct {
-		From   string `json:"from"`
-		Stream string `json:"stream"`
-	}
-	if err := json.Unmarshal([]byte(cursor), &parsed); err != nil {
+	var parsed cursor
+	if err := json.Unmarshal([]byte(next), &parsed); err != nil {
 		t.Fatalf("cursor is not valid JSON: %v", err)
 	}
-	if parsed.From != "2026-02-01" || parsed.Stream != streamMerged {
-		t.Errorf("cursor should point at February merged, got %+v", parsed)
+	if parsed.From != "2026-01-01" || parsed.Stream != streamMerged {
+		t.Errorf("cursor should point at 2026 merged, got %+v", parsed)
 	}
 
-	if _, _, err := c.Sync(context.Background(), since, cursor); err != nil {
+	if _, _, err := c.Sync(context.Background(), since, next); err != nil {
 		t.Fatalf("resumed Sync: %v", err)
 	}
-	// Resuming must not redo January.
-	for _, q := range s.queries[2:] {
-		if strings.Contains(q, "2026-01-01") {
-			t.Errorf("resumed run repeated January: %q", q)
+	// The reviewed stream covers 2024 again legitimately — it is a separate
+	// stream. What must not repeat is the merged window already done.
+	for _, q := range s.seen()[2:] {
+		if strings.Contains(q, "is:merged") && strings.Contains(q, "merged:2024-01-01") {
+			t.Errorf("resumed run repeated the merged 2024 window: %q", q)
 		}
 	}
 }
@@ -165,11 +280,39 @@ func TestSyncPaginates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	if len(s.queries) != 2 {
-		t.Errorf("a full first page should trigger a second request, got %d", len(s.queries))
+	if got := len(s.seen()); got != 2 {
+		t.Errorf("a full first page should trigger a second request, got %d", got)
 	}
 	if len(records) != perPage {
 		t.Errorf("expected %d records, got %d", perPage, len(records))
+	}
+}
+
+// A backfill is several cursor-driven Sync calls. Stats describe the whole run,
+// so they must accumulate rather than reset each call.
+func TestSyncStatsAccumulateAcrossRounds(t *testing.T) {
+	s := newStub(t, 1)
+	c := newConnector(t, s.server.URL, 2)
+
+	since := time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC)
+	resume := ""
+	for round := 0; round < 10; round++ {
+		_, next, err := c.Sync(context.Background(), since, resume)
+		if err != nil {
+			t.Fatalf("round %d: %v", round, err)
+		}
+		if next == "" {
+			break
+		}
+		resume = next
+	}
+
+	stats := c.SyncStats()
+	if stats["queries_issued"] != 6 {
+		t.Errorf("queries_issued = %d across all rounds, want 6", stats["queries_issued"])
+	}
+	if stats["windows_searched"] != 6 {
+		t.Errorf("windows_searched = %d across all rounds, want 6", stats["windows_searched"])
 	}
 }
 
@@ -294,46 +437,26 @@ func TestStreamsDoNotCollide(t *testing.T) {
 	}
 }
 
-func TestBuildTasksIsMonthAligned(t *testing.T) {
-	since := time.Date(2026, 1, 20, 0, 0, 0, 0, time.UTC)
+func TestBuildTasksIsYearAlignedPerStream(t *testing.T) {
+	since := time.Date(2024, 6, 20, 0, 0, 0, 0, time.UTC)
 	until := time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC)
 
 	tasks := buildTasks(since, until)
 	if len(tasks) != 6 {
-		t.Fatalf("expected 6 tasks, got %d", len(tasks))
+		t.Fatalf("expected 6 tasks (3 years x 2 streams), got %d", len(tasks))
 	}
-	// Reaching back to the first of the month deliberately overlaps `since`;
-	// re-ingesting is a no-op, and the overlap is what stops silent gaps.
-	if got := tasks[0].start; got.Day() != 1 || got.Month() != time.January {
-		t.Errorf("first window should start 1 January, got %s", got)
+	// Reaching back to 1 January deliberately overlaps `since`; re-ingesting is
+	// a no-op, and the overlap is what stops silent gaps.
+	if got := tasks[0].start; got.Day() != 1 || got.Month() != time.January || got.Year() != 2024 {
+		t.Errorf("first window should start 1 January 2024, got %s", got)
 	}
-}
-
-// A backfill is several cursor-driven Sync calls. Stats describe the whole run,
-// so they must accumulate rather than reset each call — otherwise a 26-query
-// backfill reports however many queries the last round issued.
-func TestSyncStatsAccumulateAcrossRounds(t *testing.T) {
-	s := newStub(t, 1)
-	c := newConnector(t, s.server.URL, 2)
-
-	since := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
-	cursor := ""
-	for round := 0; round < 10; round++ {
-		_, next, err := c.Sync(context.Background(), since, cursor)
-		if err != nil {
-			t.Fatalf("round %d: %v", round, err)
+	// The final window must stop at `until`, not run to 31 December.
+	if got := tasks[2].end; !got.Equal(until) {
+		t.Errorf("last merged window should end at until (%s), got %s", until, got)
+	}
+	for _, task := range tasks[:3] {
+		if task.stream != streamMerged {
+			t.Errorf("expected the merged stream first, got %q", task.stream)
 		}
-		if next == "" {
-			break
-		}
-		cursor = next
-	}
-
-	stats := c.SyncStats()
-	if stats["queries_issued"] != 6 {
-		t.Errorf("queries_issued = %d across all rounds, want 6", stats["queries_issued"])
-	}
-	if stats["windows_searched"] != 6 {
-		t.Errorf("windows_searched = %d across all rounds, want 6", stats["windows_searched"])
 	}
 }

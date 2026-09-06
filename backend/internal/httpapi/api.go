@@ -392,10 +392,25 @@ func (a *API) handleSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An optional start date, for reaching back past the point a previous
+	// successful sync already advanced the watermark to.
+	var opts syncer.Options
+	var body struct {
+		Since string `json:"since"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxBodyBytes)).Decode(&body); err == nil && body.Since != "" {
+		since, err := parseTimeParam(body.Since, time.Time{})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "since: "+err.Error())
+			return
+		}
+		opts.Since = &since
+	}
+
 	// The request context governs the sync, so navigating away cancels it.
 	// That is safe: progress is checkpointed to the cursor between rounds, so
 	// the next run resumes rather than restarting.
-	report, err := a.runner.Sync(r.Context(), acct)
+	report, err := a.runner.Sync(r.Context(), acct, opts)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{
 			"error":  err.Error(),

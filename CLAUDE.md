@@ -108,9 +108,18 @@ authenticated, 100 results per page, and a hard cap of **1,000 results per
 query**. The cap is why a backfill issues one query per calendar month rather
 than one for the whole range.
 
-- Two streams per month window: `is:pr author:X is:merged merged:A..B` and
+- Two streams, run one after the other, each chronologically:
+  `is:pr author:X is:merged merged:A..B` and
   `is:pr reviewed-by:X -author:X updated:A..B`. Excluding your own PRs from the
   review stream avoids double-counting.
+- **Windows are calendar years that subdivide into months only when needed.**
+  Fixed month windows were sized for the worst case and made a ten-year backfill
+  240 paced queries (~8 minutes). Since the API returns `total_count` on the
+  first page, density is measured rather than assumed: a year over the 1,000-result
+  cap is discarded and re-fetched month by month, costing one wasted probe; a
+  sparse year costs one query. A decade of sparse history is 22 queries, not 264.
+- A month still over the cap cannot be subdivided further, so it increments
+  `windows_truncated` and the report says records were lost.
 - External IDs are prefixed per stream (`pr:acme/api#12`, `review:acme/api#12`)
   so the same PR in both streams cannot collide in `raw_records`, while both
   carry `subject_key: github:acme/api#12`.
@@ -132,6 +141,14 @@ than one for the whole range.
 - **No scheduler.** Syncs run on demand and once at startup, in a goroutine off
   the critical path. The server only exists while running, so a ticker would
   sync only while you develop; deep-`since` backfill means a stale sync catches up.
+- **The first sync reaches back ten years** (`Runner.BackfillYears`, overridable
+  with `SYNC_BACKFILL_YEARS`). One year was the original default and was wrong:
+  this tool reconstructs a career's evidence, and someone whose most recent
+  merged PR is two years old got a successful sync with zero events. Year-sized
+  windows are what make the wider default affordable.
+- **`POST /api/source-accounts/{id}/sync` accepts `{"since": "YYYY-MM-DD"}`**,
+  which beats both the watermark and the default. That is the only way to reach
+  history older than a successful sync, since success advances `last_synced_at`.
 - **Overlap is deliberate.** Sync from `last_synced_at - 24h`. Search indexes are
   eventually consistent and clocks drift, so an exact boundary loses records
   silently. Re-ingesting costs nothing, which is what makes the slack affordable.
@@ -140,6 +157,9 @@ than one for the whole range.
 - **Reports say what was examined**, not just what was produced. "Found nothing"
   and "never issued a query" must not look alike — the signature GitHub failure
   is a token that authenticates but sees nothing.
+- **The empty-result note names the search window first.** An earlier version led
+  with scopes and SSO and sent someone hunting a permissions problem when their
+  most recent merged PR was simply older than the range. Cheapest cause first.
 
 ## Configuration and secrets
 

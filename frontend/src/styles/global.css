@@ -360,3 +360,7 @@ h3 {
   font-family: var(--font-mono);
   color: var(--color-text-muted);
 }
+
+.sources__since {
+  margin-top: var(--space-6);
+}

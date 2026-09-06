@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -88,6 +89,9 @@ func run() error {
 	pipeline.Register("github", github.Normalizer{})
 
 	runner := syncer.New(st, pipeline)
+	if years, err := strconv.Atoi(os.Getenv("SYNC_BACKFILL_YEARS")); err == nil && years > 0 {
+		runner.BackfillYears = years
+	}
 	runner.Register("github", func(acct store.SourceAccount, token string) (core.Fetcher, error) {
 		return github.New(github.Config{
 			Login:   acct.ExternalAccountID,

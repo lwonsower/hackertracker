@@ -92,6 +92,14 @@ export function connectGitHub(
   })
 }
 
-export function syncSource(id: string): Promise<SyncReport> {
-  return request(`/api/source-accounts/${id}/sync`, { method: 'POST' })
+/**
+ * Runs a sync. `since` (YYYY-MM-DD) overrides where the backfill starts, which
+ * is how you reach history older than the point a previous successful sync
+ * already advanced the watermark past.
+ */
+export function syncSource(id: string, since?: string): Promise<SyncReport> {
+  return request(`/api/source-accounts/${id}/sync`, {
+    method: 'POST',
+    body: JSON.stringify(since ? { since } : {}),
+  })
 }

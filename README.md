@@ -77,10 +77,13 @@ belongs to — a token that authenticates but can see nothing is GitHub's nastie
 failure, because it produces syncs that succeed and return zero events.
 
 Syncs run on demand ("Sync now") and once at server startup. There is no
-background scheduler: the first sync backfills a year, and later ones only cover
-the time since the last success plus a day of overlap. A sync reports what it
-*examined*, not just what it found, so an empty result is legible rather than
-silently reassuring.
+background scheduler: **a first sync backfills ten years**, and later ones cover
+the time since the last success plus a day of overlap. Use "Backfill from" to
+reach further back, or past a watermark a previous sync already advanced.
+
+A sync reports what it *examined* — queries issued and the date it searched back
+to — not just what it found, so an empty result tells you which of the two
+likely causes it was. Set `SYNC_BACKFILL_YEARS` to change the default.
 
 Set `GITHUB_API_BASE_URL` for GitHub Enterprise Server.
 
