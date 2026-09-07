@@ -1,8 +1,8 @@
 # hacker tracker
 
-A personal record of your work — the evidence you need for a review, a
-promotion case, or a PIP you're climbing out of. Single user, self-hosted,
-never an enterprise tool.
+A record of your work — the evidence you need for a review, a promotion case, or
+a PIP you're climbing out of. Every person gets their own account; nothing is
+shared between them.
 
 ## Quick start
 
@@ -14,8 +14,33 @@ npm run db:up                     # Postgres 17 in Docker
 npm run dev                       # Vite on :5173, Go on :8080
 ```
 
-Open http://localhost:5173. Migrations run automatically when the server
-starts.
+Open http://localhost:5173 and sign in.
+
+### Google sign-in
+
+In the Google Cloud console:
+
+1. **APIs & Services → OAuth consent screen** — configure it, and add your own
+   address under *Test users* while the app is unverified, or Google will refuse
+   to sign you in.
+2. **APIs & Services → Credentials → Create credentials → OAuth client ID**,
+   type *Web application*.
+3. Under **Authorised redirect URIs** add exactly:
+   `http://localhost:5173/api/auth/google/callback`
+
+   Port 5173, not 8080: in development the browser only ever talks to Vite,
+   which proxies `/api` to the Go server. This value must match
+   `OAUTH_REDIRECT_URL` character for character — Google compares it on both the
+   authorisation request and the token exchange.
+
+Then put the client ID and secret in `.env.local` and restart.
+
+Set `DEV_SIGN_IN_EMAIL` instead to get in without configuring Google at all —
+refused unless the server is self-hosted, and every use is logged.
+
+Migrations run automatically when the server starts. On a self-hosted instance
+the first person to sign in adopts any data that predates accounts, so existing
+history is not stranded.
 
 Postgres is published on **5442**, not 5432, so it can't collide with a
 Homebrew or Postgres.app install you already have. `npm run db:up` waits for

@@ -9,7 +9,7 @@ import (
 func TestResolveEnv(t *testing.T) {
 	t.Setenv("HT_TEST_TOKEN", "s3cret")
 
-	got, err := Resolve("env:HT_TEST_TOKEN")
+	got, err := (Resolver{AllowEnv: true}).Resolve("env:HT_TEST_TOKEN")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestResolveRejectsBadRefs(t *testing.T) {
 	}
 	for name, ref := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := Resolve(ref); err == nil {
+			if _, err := (Resolver{AllowEnv: true}).Resolve(ref); err == nil {
 				t.Errorf("expected an error for %q", ref)
 			}
 		})
@@ -38,12 +38,13 @@ func TestResolveRejectsBadRefs(t *testing.T) {
 // Pasting a token where a variable name belongs must be caught before the
 // value can be echoed back in an error message.
 func TestResolveRejectsPastedCredentials(t *testing.T) {
+	// Credential-shaped fixtures; not real tokens.
 	pasted := []string{
-		"env:github_pat_11AEAWVAA0FVnj9aVqkWqxXQMevouUBqHFWwre498Jcv6OMSbBNzoujdgy6Dpw6",
+		"env:github_pat_11EXAMPLEEXAMPLEEXAMPLE_notARealTokenJustAFixtureAAAAAAAAAAAAA",
 		"env:ghp_abcdefghijklmnopqrstuvwxyz0123456789",
 		"env:glpat-abcdefghijklmnopqrst",
 		"env:xoxb-1234-5678-abcdefghijklmnop",
-		"github_pat_11AEAWVAA0FVnj9aVqkWqxXQMevouUBqHFWwre498Jcv6OMSbBNzoujdgy6Dpw6",
+		"github_pat_11EXAMPLEEXAMPLEEXAMPLE_notARealTokenJustAFixtureAAAAAAAAAAAAA",
 	}
 	for _, ref := range pasted {
 		err := mustFail(t, ref)
@@ -77,9 +78,21 @@ func TestResolveEchoesOrdinaryNames(t *testing.T) {
 
 func mustFail(t *testing.T, ref string) error {
 	t.Helper()
-	_, err := Resolve(ref)
+	_, err := (Resolver{AllowEnv: true}).Resolve(ref)
 	if err == nil {
 		t.Fatalf("expected %q to be rejected", ref)
 	}
 	return err
+}
+
+// A shared environment variable across accounts would be a cross-account data
+// leak, so hosted deployments must refuse the scheme outright.
+func TestResolveRefusesEnvWhenDisallowed(t *testing.T) {
+	t.Setenv("HT_TEST_TOKEN", "s3cret")
+
+	if _, err := (Resolver{AllowEnv: false}).Resolve("env:HT_TEST_TOKEN"); err == nil {
+		t.Fatal("expected env: credentials to be refused")
+	} else if !strings.Contains(err.Error(), "another") {
+		t.Errorf("the refusal should explain why: %v", err)
+	}
 }

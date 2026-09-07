@@ -37,6 +37,7 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-hackertracker}:${POSTGRES_PASSWORD:-hackertracker}@db:5432/${POSTGRES_DB:-hackertracker}?sslmode=disable
       PORT: "8080"
+      DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-self-host}
     ports:
       - "8080:8080"
     depends_on:

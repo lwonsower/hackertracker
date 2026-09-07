@@ -22,11 +22,22 @@ export type ManualEntry = {
   note?: string
 }
 
+/** Thrown on a 401 so callers can distinguish "signed out" from a real error. */
+export class NotSignedIn extends Error {
+  constructor() {
+    super('not signed in')
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
     headers: { 'content-type': 'application/json', ...init?.headers },
   })
+
+  if (res.status === 401) {
+    throw new NotSignedIn()
+  }
 
   if (!res.ok) {
     // The API always answers errors as {"error": "..."}; fall back to the
@@ -102,4 +113,31 @@ export function syncSource(id: string, since?: string): Promise<SyncReport> {
     method: 'POST',
     body: JSON.stringify(since ? { since } : {}),
   })
+}
+
+export type Me = {
+  id: string
+  account_id: string
+  email: string
+  name?: string
+  avatar_url?: string
+}
+
+export type Providers = { google: boolean; dev: boolean }
+
+export function me(): Promise<{ user: Me }> {
+  return request('/api/me')
+}
+
+export function authProviders(): Promise<Providers> {
+  return request('/api/auth/providers')
+}
+
+/** Only available on self-hosted instances with DEV_SIGN_IN_EMAIL set. */
+export function devSignIn(): Promise<{ user: Me }> {
+  return request('/api/auth/dev-signin', { method: 'POST' })
+}
+
+export async function signOut(): Promise<void> {
+  await fetch('/api/auth/signout', { method: 'POST' })
 }

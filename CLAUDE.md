@@ -4,9 +4,10 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
 
 ## Project state
 
-A personal work-tracking tool: capture evidence of what you did, curate it into
-projects, export a review packet. Single user, self-hosted, explicitly not an
-enterprise product.
+A work-tracking tool: capture evidence of what you did, curate it into projects,
+export a review packet. **Multi-account** — every person gets their own account,
+with no sharing between them. Not an enterprise product: no teams, no org
+admin, no shared workspaces (yet).
 
 Built so far: the schema, the ingest pipeline, the generic HTTP ingest endpoint,
 manual capture, a timeline, and the GitHub pull connector with on-demand and
@@ -47,6 +48,7 @@ A monorepo whose two halves combine into one binary.
 - `internal/ingest` — the single write path (`Pipeline.Ingest`).
 - `internal/db` — pool plus embedded goose migrations.
 - `internal/httpapi` — HTTP handlers.
+- `internal/auth` — Google sign-in and sessions.
 - `internal/dotenv` — loads `.env.local` then `.env` at startup, searching up
   from the working directory so `go run .` from `backend/` finds the repo-root
   files. Never overwrites an existing environment variable.
@@ -56,10 +58,20 @@ A monorepo whose two halves combine into one binary.
   Fetcher over its cursor, feed the pipeline, record sync state.
 - `internal/connectors/github` — the first pull connector.
 
-**`frontend/`** — Vite + React + TypeScript, `react-router-dom`. Routes in
-`src/routes/`, API client in `src/api.ts`, styling split between
-`styles/tokens.css` (design tokens — reference these, don't hard-code values)
-and `styles/global.css`.
+**`frontend/`** — Vite + React + TypeScript, `react-router-dom`.
+
+- `layout/AppShell.tsx` — the sidebar and nav, rendering pages through an
+  `<Outlet />`. Every route is nested under it in `main.tsx`.
+- `routes/Timeline.tsx` (`/`) — capture form plus the event timeline.
+- `routes/Sources.tsx` (`/sources`) — connect a source, see its sync state, run
+  a sync.
+- `routes/Goals.tsx` (`/goals`) — placeholder.
+- `api.ts` — the API client. Styling is split between `styles/tokens.css`
+  (design tokens — reference these, don't hard-code values) and
+  `styles/global.css`.
+
+Deep links survive a hard refresh because the Go SPA handler falls back to
+`index.html` for any path outside `/api`.
 
 **The build seam**: `frontend/vite.config.ts` sets `build.outDir` to
 `../backend/web`, which is what `//go:embed web` picks up, so `go build` after a
@@ -138,9 +150,11 @@ than one for the whole range.
 
 ## Sync behaviour
 
-- **No scheduler.** Syncs run on demand and once at startup, in a goroutine off
-  the critical path. The server only exists while running, so a ticker would
-  sync only while you develop; deep-`since` backfill means a stale sync catches up.
+- **No scheduler, and no sync at startup any more.** Syncs run on demand only.
+  The global `SyncAll` was removed when accounts arrived: syncing every account's
+  sources on boot is both unbounded work and a scoping violation. Scheduled
+  syncing needs a job queue that does not exist yet. `SyncAccount` covers one
+  account's sources.
 - **The first sync reaches back ten years** (`Runner.BackfillYears`, overridable
   with `SYNC_BACKFILL_YEARS`). One year was the original default and was wrong:
   this tool reconstructs a career's evidence, and someone whose most recent
@@ -160,6 +174,83 @@ than one for the whole range.
 - **The empty-result note names the search window first.** An earlier version led
   with scopes and SSO and sent someone hunting a permissions problem when their
   most recent merged PR was simply older than the range. Cheapest cause first.
+
+## Accounts and isolation
+
+**Data belongs to an account, not a user.** Today every account has exactly one
+user, but the indirection means shared workspaces or a manager view later need
+no rewrite of every foreign key.
+
+**Isolation is enforced by the database, not by discipline.** Every content
+table has `account_id` and a row-level security policy filtering on
+`current_setting('app.account_id')`. A forgotten `WHERE` clause returns nothing
+instead of everyone's data.
+
+Three things make that real, and all three are load-bearing:
+
+1. **`FORCE ROW LEVEL SECURITY`**, or the table owner ignores its own policies.
+2. **`SET LOCAL ROLE hackertracker_app`** in `store.DB.Scope`. This is the
+   subtle one: *superusers ignore RLS entirely*, and the role Compose creates
+   from `POSTGRES_USER` is a superuser. Without the role drop the policies are
+   enabled, forced, and completely inert. The role has no LOGIN; it exists only
+   to shed privileges.
+3. **`db.VerifyIsolation` at startup**, which refuses to serve if the drop does
+   not take effect or if any events are visible with no account set. The failure
+   it guards against is silent, so it must be fatal.
+
+`store.Store` cannot be constructed outside `DB.Scope`, so a handler has no way
+to reach data without naming an account. Both settings are transaction-local and
+unwind on commit.
+
+**Unscoped queries live only in `store/identity.go`** — sessions, users and
+ingest-token lookups, the queries that *establish* a scope and so cannot run
+inside one. Keep that file small; it is the one place the database will not
+catch a mistake.
+
+Inside a scope, "belongs to someone else" and "does not exist" are the same
+answer: a 404, never a 403, so an id cannot be probed for existence.
+
+## Sign-in
+
+Google authorization-code flow with PKCE. The ID token signature is
+deliberately not verified: the code is exchanged directly with Google over TLS
+and the profile read from the userinfo endpoint over the same channel, so there
+is no untrusted intermediary — which removes a JWKS dependency and a class of
+verification bugs. Unverified email addresses are rejected, because account
+linking matches on email.
+
+Sessions are opaque random tokens stored server-side (hashed), not JWTs:
+revocable immediately, nothing sensitive in the cookie. HttpOnly, SameSite=Lax,
+Secure when hosted.
+
+`user_identities` is separate from `users` so a second provider links to an
+existing person instead of silently creating a duplicate account holding none of
+their history.
+
+`redirect_to` is restricted to same-site paths, so the handshake cannot be used
+as an open redirect. `auth_states` rows are deleted on consumption, making every
+sign-in link single use.
+
+The sign-in button follows Google's published branding spec (dark variant:
+`#131314` fill, `#8E918F` stroke, 12px before the mark and 10px after, 14/20
+type). Those values are hard-coded rather than tokenised on purpose — they are
+Google's, and must not move if the palette is re-themed. The G mark is
+referenced from Google rather than redrawn, because their guidelines require the
+standard-colour asset unaltered; self-host it in `frontend/public/` to drop the
+third-party request.
+
+## Deployment modes
+
+`DEPLOYMENT_MODE` is `self-host` (default) or `hosted`. Self-host enables three
+things that each assume a single trusted user, and hosted disables all three:
+
+- **Orphan account adoption** — the first sign-in claims an account that has data
+  but no users. This is how rows migrated from the single-user era find an owner.
+  Hosted, it would hand a stranger someone else's data.
+- **`env:` credential references** — with several accounts, two both referencing
+  `env:GITHUB_TOKEN` would share one token, and each would see the other's
+  GitHub data captured under their own name.
+- **`DEV_SIGN_IN_EMAIL`** — bypasses Google entirely.
 
 ## Configuration and secrets
 
