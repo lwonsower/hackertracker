@@ -40,7 +40,7 @@ function summarise(report: SyncReport): string {
   return parts.join(' · ')
 }
 
-export default function Sources({ onSynced }: { onSynced: () => void }) {
+export default function Sources() {
   const [sources, setSources] = useState<SourceAccount[]>([])
   const [label, setLabel] = useState('GitHub')
   const [envVar, setEnvVar] = useState('GITHUB_TOKEN')
@@ -102,7 +102,6 @@ export default function Sources({ onSynced }: { onSynced: () => void }) {
       const report = await syncSource(id, since || undefined)
       setReports((prev) => ({ ...prev, [id]: report }))
       await refresh()
-      onSynced()
     } catch (err) {
       setSyncErrors((prev) => ({ ...prev, [id]: err instanceof Error ? err.message : String(err) }))
       await refresh()
@@ -112,103 +111,103 @@ export default function Sources({ onSynced }: { onSynced: () => void }) {
   }
 
   return (
-    <section className="panel" aria-labelledby="sources-heading">
-      <h2 id="sources-heading" className="panel__title">
-        Sources
-      </h2>
-      <p className="panel__hint">
-        Put your token in <code>.env.local</code>, then enter the <strong>name</strong> of
-        that variable below — not the token. Nothing secret is sent here or stored in the
-        database.
-      </p>
-
-      <form className="form" onSubmit={handleConnect}>
-        <div className="field-row">
-          <label className="field">
-            <span className="field__label">Label</span>
-            <input className="field__input" value={label} onChange={(e) => setLabel(e.target.value)} required />
-          </label>
-          <label className="field">
-            <span className="field__label">Variable name</span>
-            <div className="field__prefixed">
-              <span className="field__prefix">env:</span>
-              <input
-                className="field__input"
-                value={envVar}
-                onChange={(e) => setEnvVar(e.target.value)}
-                placeholder="GITHUB_TOKEN"
-                autoComplete="off"
-                spellCheck={false}
-                required
-              />
-            </div>
-          </label>
-        </div>
-
-        <p className="field__help">
-          e.g. <code>GITHUB_TOKEN</code>, set as <code>GITHUB_TOKEN=…</code> in{' '}
-          <code>.env.local</code>
+    <>
+      <h1 className="page__title">Sources</h1>
+      <section className="panel">
+        <p className="panel__hint">
+          Put your token in <code>.env.local</code>, then enter the <strong>name</strong> of
+          that variable below — not the token. Nothing secret is sent here or stored in the
+          database.
         </p>
 
-        {connectError && <p className="alert">{connectError}</p>}
-
-        <button className="button button--quiet" type="submit" disabled={connecting}>
-          {connecting ? 'Verifying…' : 'Connect GitHub'}
-        </button>
-      </form>
-
-      <label className="field sources__since">
-        <span className="field__label">
-          Backfill from <span className="field__optional">optional</span>
-        </span>
-        <input
-          className="field__input"
-          type="date"
-          value={since}
-          onChange={(e) => setSince(e.target.value)}
-        />
-        <span className="field__help">
-          Leave empty to continue from the last successful sync, or ten years back on a
-          first run. Set a date to reach further back.
-        </span>
-      </label>
-
-      <ul className="sources">
-        {sources.map((source) => {
-          const report = reports[source.id]
-          const failure = syncErrors[source.id] || source.last_error
-          return (
-            <li key={source.id} className="source">
-              <div className="source__head">
-                <span className="source__label">{source.label}</span>
-                <span className="badge">{source.mode}</span>
+        <form className="form" onSubmit={handleConnect}>
+          <div className="field-row">
+            <label className="field">
+              <span className="field__label">Label</span>
+              <input className="field__input" value={label} onChange={(e) => setLabel(e.target.value)} required />
+            </label>
+            <label className="field">
+              <span className="field__label">Variable name</span>
+              <div className="field__prefixed">
+                <span className="field__prefix">env:</span>
+                <input
+                  className="field__input"
+                  value={envVar}
+                  onChange={(e) => setEnvVar(e.target.value)}
+                  placeholder="GITHUB_TOKEN"
+                  autoComplete="off"
+                  spellCheck={false}
+                  required
+                />
               </div>
-              <div className="source__meta">
-                {source.mode === 'pull' ? relative(source.last_synced_at) : 'receives pushes'}
-                {source.external_account_id && ` · ${source.external_account_id}`}
-              </div>
+            </label>
+          </div>
 
-              {source.mode === 'pull' && (
-                <button
-                  className="button button--quiet"
-                  onClick={() => void handleSync(source.id)}
-                  disabled={syncing === source.id}
-                >
-                  {syncing === source.id ? 'Syncing…' : 'Sync now'}
-                </button>
-              )}
+          <p className="field__help">
+            e.g. <code>GITHUB_TOKEN</code>, set as <code>GITHUB_TOKEN=…</code> in{' '}
+            <code>.env.local</code>
+          </p>
 
-              {report && <p className="source__report">{summarise(report)}</p>}
-              {report?.notes?.map((note) => (
-                <p key={note} className="alert">
-                  {note}
-                </p>
-              ))}
-              {failure && <p className="alert">{failure}</p>}
-            </li>
-          )
-        })}
-      </ul>
-    </section>
+          {connectError && <p className="alert">{connectError}</p>}
+
+          <button className="button button--quiet" type="submit" disabled={connecting}>
+            {connecting ? 'Verifying…' : 'Connect GitHub'}
+          </button>
+        </form>
+
+        <label className="field sources__since">
+          <span className="field__label">
+            Backfill from <span className="field__optional">optional</span>
+          </span>
+          <input
+            className="field__input"
+            type="date"
+            value={since}
+            onChange={(e) => setSince(e.target.value)}
+          />
+          <span className="field__help">
+            Leave empty to continue from the last successful sync, or ten years back on a
+            first run. Set a date to reach further back.
+          </span>
+        </label>
+
+        <ul className="sources">
+          {sources.map((source) => {
+            const report = reports[source.id]
+            const failure = syncErrors[source.id] || source.last_error
+            return (
+              <li key={source.id} className="source">
+                <div className="source__head">
+                  <span className="source__label">{source.label}</span>
+                  <span className="badge">{source.mode}</span>
+                </div>
+                <div className="source__meta">
+                  {source.mode === 'pull' ? relative(source.last_synced_at) : 'receives pushes'}
+                  {source.external_account_id && ` · ${source.external_account_id}`}
+                </div>
+
+                {source.mode === 'pull' && (
+                  <button
+                    className="button button--quiet"
+                    onClick={() => void handleSync(source.id)}
+                    disabled={syncing === source.id}
+                  >
+                    {syncing === source.id ? 'Syncing…' : 'Sync now'}
+                  </button>
+                )}
+
+                {report && <p className="source__report">{summarise(report)}</p>}
+                {report?.notes?.map((note) => (
+                  <p key={note} className="alert">
+                    {note}
+                  </p>
+                ))}
+                {failure && <p className="alert">{failure}</p>}
+              </li>
+            )
+          })}
+        </ul>
+      </section>
+    </>
   )
 }

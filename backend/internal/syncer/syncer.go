@@ -32,8 +32,9 @@ type statsReporter interface {
 }
 
 type Runner struct {
-	store    *store.Store
+	db       *store.DB
 	pipeline *ingest.Pipeline
+	secrets  secrets.Resolver
 	builders map[string]BuildFunc
 
 	// overlap re-covers ground on every sync. Search indexes are eventually
@@ -54,10 +55,11 @@ type Runner struct {
 	maxRounds int
 }
 
-func New(st *store.Store, p *ingest.Pipeline) *Runner {
+func New(db *store.DB, p *ingest.Pipeline, resolver secrets.Resolver) *Runner {
 	return &Runner{
-		store:     st,
+		db:        db,
 		pipeline:  p,
+		secrets:   resolver,
 		builders:  map[string]BuildFunc{},
 		overlap:       24 * time.Hour,
 		BackfillYears: 10,
@@ -99,13 +101,20 @@ func (r *Runner) Sync(ctx context.Context, acct store.SourceAccount, opts Option
 		return report, fmt.Errorf("no connector registered for source %q", acct.Source)
 	}
 
-	token, err := secrets.Resolve(acct.CredentialsRef)
+	token, err := r.secrets.Resolve(acct.CredentialsRef)
 	if err != nil {
-		return report, r.fail(ctx, acct.ID, err)
+		return report, r.fail(ctx, acct, err)
 	}
 
-	state, err := r.store.GetSyncState(ctx, acct.ID)
-	if err != nil {
+	// Each step opens its own account scope. Separate transactions are what we
+	// want anyway: the cursor must be durable between rounds so an interrupted
+	// backfill resumes rather than restarting.
+	var state store.SyncState
+	if err := r.db.Scope(ctx, acct.AccountID, func(st *store.Store) error {
+		var err error
+		state, err = st.GetSyncState(ctx, acct.ID)
+		return err
+	}); err != nil {
 		return report, err
 	}
 
@@ -123,21 +132,25 @@ func (r *Runner) Sync(ctx context.Context, acct store.SourceAccount, opts Option
 
 	fetcher, err := build(acct, token)
 	if err != nil {
-		return report, r.fail(ctx, acct.ID, err)
+		return report, r.fail(ctx, acct, err)
 	}
 
 	cursor := state.Cursor
 	for round := 0; round < r.maxRounds; round++ {
 		records, next, err := fetcher.Sync(ctx, since, cursor)
 		if err != nil {
-			return report, r.fail(ctx, acct.ID, err)
+			return report, r.fail(ctx, acct, err)
 		}
 		report.Rounds++
 
 		if len(records) > 0 {
-			res, err := r.pipeline.Ingest(ctx, acct, records)
-			if err != nil {
-				return report, r.fail(ctx, acct.ID, err)
+			var res ingest.Result
+			if err := r.db.Scope(ctx, acct.AccountID, func(st *store.Store) error {
+				var err error
+				res, err = r.pipeline.Ingest(ctx, st, acct, records)
+				return err
+			}); err != nil {
+				return report, r.fail(ctx, acct, err)
 			}
 			report.Created += res.Created
 			report.Updated += res.Updated
@@ -151,7 +164,7 @@ func (r *Runner) Sync(ctx context.Context, acct store.SourceAccount, opts Option
 		// Persist the cursor between rounds so an interrupted backfill resumes
 		// where it stopped instead of starting over.
 		cursor = next
-		if err := r.store.SaveSyncState(ctx, acct.ID, store.SyncState{Cursor: next}); err != nil {
+		if err := r.saveState(ctx, acct, store.SyncState{Cursor: next}); err != nil {
 			return report, err
 		}
 	}
@@ -166,7 +179,7 @@ func (r *Runner) Sync(ctx context.Context, acct store.SourceAccount, opts Option
 	} else {
 		final.Cursor = cursor
 	}
-	if err := r.store.SaveSyncState(ctx, acct.ID, final); err != nil {
+	if err := r.saveState(ctx, acct, final); err != nil {
 		return report, err
 	}
 
@@ -174,11 +187,21 @@ func (r *Runner) Sync(ctx context.Context, acct store.SourceAccount, opts Option
 	return report, nil
 }
 
-// SyncAll runs every configured pull account, collecting failures rather than
-// stopping: one broken source should not prevent the others from updating.
-func (r *Runner) SyncAll(ctx context.Context) ([]Report, error) {
-	accounts, err := r.store.ListPullAccounts(ctx)
-	if err != nil {
+// SyncAccount runs every pull source belonging to one account, collecting
+// failures rather than stopping: one broken source should not prevent the
+// others from updating.
+//
+// Note this is per-account by construction. The previous global SyncAll, and
+// the sync-at-startup that called it, are gone: with many accounts, syncing
+// everything on boot is both a scoping violation and an unbounded amount of
+// work. Scheduled syncing needs a job queue, which is not built yet.
+func (r *Runner) SyncAccount(ctx context.Context, accountID uuid.UUID) ([]Report, error) {
+	var accounts []store.SourceAccount
+	if err := r.db.Scope(ctx, accountID, func(st *store.Store) error {
+		var err error
+		accounts, err = st.ListPullAccounts(ctx)
+		return err
+	}); err != nil {
 		return nil, err
 	}
 
@@ -194,10 +217,16 @@ func (r *Runner) SyncAll(ctx context.Context) ([]Report, error) {
 	return reports, nil
 }
 
-// fail records the error against the account so it is visible in the UI rather
+func (r *Runner) saveState(ctx context.Context, acct store.SourceAccount, state store.SyncState) error {
+	return r.db.Scope(ctx, acct.AccountID, func(st *store.Store) error {
+		return st.SaveSyncState(ctx, acct.ID, state)
+	})
+}
+
+// fail records the error against the source so it is visible in the UI rather
 // than only in the logs, and returns it unchanged.
-func (r *Runner) fail(ctx context.Context, id uuid.UUID, cause error) error {
-	if err := r.store.SaveSyncState(ctx, id, store.SyncState{LastError: cause.Error()}); err != nil {
+func (r *Runner) fail(ctx context.Context, acct store.SourceAccount, cause error) error {
+	if err := r.saveState(ctx, acct, store.SyncState{LastError: cause.Error()}); err != nil {
 		log.Printf("could not record sync failure: %v", err)
 	}
 	return cause

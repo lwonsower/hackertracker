@@ -15,14 +15,12 @@ import (
 
 // Pipeline routes raw records to the right normaliser and persists the result.
 type Pipeline struct {
-	store       *store.Store
 	normalizers map[string]core.Normalizer
 	fallback    core.Normalizer
 }
 
-func New(st *store.Store) *Pipeline {
+func New() *Pipeline {
 	return &Pipeline{
-		store:       st,
 		normalizers: map[string]core.Normalizer{},
 		// Anything without a registered normaliser is expected to speak the
 		// strict envelope — which is every push, manual and import source.
@@ -52,15 +50,20 @@ type Result struct {
 	Updated  int `json:"updated"`
 }
 
-// Ingest stores raw records and upserts the events they normalise to, all in
-// one transaction. A batch is all-or-nothing: with a strict envelope a bad
-// record is a caller error, and half-applying a payload someone will retry is
-// worse than rejecting the whole thing.
-func (p *Pipeline) Ingest(ctx context.Context, acct store.SourceAccount, raws []core.RawRecord) (Result, error) {
+// Ingest stores raw records and upserts the events they normalise to.
+//
+// The Store is passed in rather than held, because a Store only exists inside
+// an account scope — which is what guarantees these writes land in the right
+// account and cannot land in anyone else's.
+//
+// A batch is all-or-nothing: with a strict envelope a bad record is a caller
+// error, and half-applying a payload someone will retry is worse than
+// rejecting the whole thing.
+func (p *Pipeline) Ingest(ctx context.Context, scoped *store.Store, acct store.SourceAccount, raws []core.RawRecord) (Result, error) {
 	res := Result{Received: len(raws)}
 	normalizer := p.normalizerFor(acct.Source)
 
-	err := p.store.WithTx(ctx, func(st *store.Store) error {
+	err := scoped.WithTx(ctx, func(st *store.Store) error {
 		for _, raw := range raws {
 			raw.SourceAccountID = acct.ID
 

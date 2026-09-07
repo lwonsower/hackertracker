@@ -1,7 +1,9 @@
-// Package store is the only place that knows SQL. Queries are hand-written
-// against pgx rather than generated: there are few enough of them that a code
-// generator would cost more in tooling setup than it saves, and they are all
-// isolated here if that changes.
+// Package store is the only place that knows SQL.
+//
+// Content queries are reachable only through DB.Scope, which opens a
+// transaction, drops to a role that cannot bypass row-level security, and sets
+// the account the policies filter on. A Store therefore cannot exist without an
+// account, and a query that forgets to mention one still sees nothing.
 package store
 
 import (
@@ -23,46 +25,68 @@ import (
 	"github.com/lwonsower/hackertracker/backend/internal/core"
 )
 
-// ErrNotFound is returned instead of pgx.ErrNoRows so callers don't need to
-// import pgx to tell "nothing there" from "something broke".
+// AppRole is the privilege-shedding role every scoped transaction assumes.
+// It has no LOGIN and exists only so policies actually apply — see the comment
+// in migration 00002.
+const AppRole = "hackertracker_app"
+
 var ErrNotFound = errors.New("not found")
 
-// querier is satisfied by both *pgxpool.Pool and pgx.Tx, which is what lets
-// WithTx hand back a Store bound to a transaction without duplicating methods.
+// querier is satisfied by both *pgxpool.Pool and pgx.Tx.
 type querier interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-type Store struct{ db querier }
+// DB owns the pool. It deliberately exposes no content queries of its own.
+type DB struct{ pool *pgxpool.Pool }
 
-func New(pool *pgxpool.Pool) *Store { return &Store{db: pool} }
+func New(pool *pgxpool.Pool) *DB { return &DB{pool: pool} }
 
-// WithTx runs fn against a transactional Store, committing if it returns nil.
-// Nested calls are a no-op so a caller already inside a transaction composes
-// cleanly.
-func (s *Store) WithTx(ctx context.Context, fn func(*Store) error) error {
-	pool, ok := s.db.(*pgxpool.Pool)
-	if !ok {
-		return fn(s)
-	}
-	tx, err := pool.Begin(ctx)
+// Scope runs fn against a Store bound to one account.
+//
+// Order matters: the role is dropped before anything else, because as a
+// superuser the policies are inert no matter what app.account_id says. Both
+// settings are transaction-local, so they unwind on commit or rollback and
+// cannot leak to the next borrower of this connection.
+func (d *DB) Scope(ctx context.Context, accountID uuid.UUID, fn func(*Store) error) error {
+	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if err := fn(&Store{db: tx}); err != nil {
+	if _, err := tx.Exec(ctx, "set local role "+AppRole); err != nil {
+		return fmt.Errorf("could not drop to %s: %w", AppRole, err)
+	}
+	if _, err := tx.Exec(ctx, "select set_config('app.account_id', $1, true)", accountID.String()); err != nil {
+		return fmt.Errorf("could not set the account scope: %w", err)
+	}
+
+	if err := fn(&Store{db: tx, accountID: accountID}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
+// Store is bound to exactly one account for the life of one transaction.
+type Store struct {
+	db        querier
+	accountID uuid.UUID
+}
+
+func (s *Store) AccountID() uuid.UUID { return s.accountID }
+
+// WithTx is a no-op passthrough: a scoped Store is already inside one. It
+// exists so callers written before scoping still read naturally.
+func (s *Store) WithTx(_ context.Context, fn func(*Store) error) error { return fn(s) }
+
 // ── source accounts ──────────────────────────────────────────────────────
 
 type SourceAccount struct {
 	ID                uuid.UUID `json:"id"`
+	AccountID         uuid.UUID `json:"-"`
 	Source            string    `json:"source"`
 	Mode              string    `json:"mode"`
 	Label             string    `json:"label"`
@@ -70,42 +94,62 @@ type SourceAccount struct {
 	CredentialsRef    string    `json:"credentials_ref,omitempty"`
 }
 
-const sourceAccountCols = `id, source, mode, label,
+const sourceAccountCols = `id, account_id, source, mode, label,
 	coalesce(external_account_id, ''), coalesce(credentials_ref, '')`
 
-// scannable covers both pgx.Row and pgx.Rows so one scan helper serves every
-// query that selects sourceAccountCols.
 type scannable interface{ Scan(dest ...any) error }
 
 func scanSourceAccount(s scannable) (SourceAccount, error) {
 	var a SourceAccount
-	err := s.Scan(&a.ID, &a.Source, &a.Mode, &a.Label, &a.ExternalAccountID, &a.CredentialsRef)
+	err := s.Scan(&a.ID, &a.AccountID, &a.Source, &a.Mode, &a.Label,
+		&a.ExternalAccountID, &a.CredentialsRef)
 	return a, err
 }
 
-// EnsureSourceAccount is idempotent on (source, label), so start-up can call it
-// unconditionally.
 func (s *Store) EnsureSourceAccount(ctx context.Context, source, mode, label string) (SourceAccount, error) {
 	return scanSourceAccount(s.db.QueryRow(ctx, `
-		insert into source_accounts (source, mode, label)
-		values ($1, $2, $3)
-		on conflict (source, label) do update set mode = excluded.mode
+		insert into source_accounts (account_id, source, mode, label)
+		values ($1, $2, $3, $4)
+		on conflict (account_id, source, label) do update set mode = excluded.mode
 		returning `+sourceAccountCols,
-		source, mode, label))
+		s.accountID, source, mode, label))
 }
 
-// CreatePullAccount connects a polling source. Upserting on (source, label)
-// makes reconnecting the same account idempotent rather than an error.
 func (s *Store) CreatePullAccount(ctx context.Context, source, label, externalAccountID, credentialsRef string) (SourceAccount, error) {
 	return scanSourceAccount(s.db.QueryRow(ctx, `
-		insert into source_accounts (source, mode, label, external_account_id, credentials_ref)
-		values ($1, 'pull', $2, $3, $4)
-		on conflict (source, label) do update set
+		insert into source_accounts (account_id, source, mode, label, external_account_id, credentials_ref)
+		values ($1, $2, 'pull', $3, $4, $5)
+		on conflict (account_id, source, label) do update set
 			mode                = 'pull',
 			external_account_id = excluded.external_account_id,
 			credentials_ref     = excluded.credentials_ref
 		returning `+sourceAccountCols,
-		source, label, externalAccountID, credentialsRef))
+		s.accountID, source, label, externalAccountID, credentialsRef))
+}
+
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+// CreatePushEndpoint mints a webhook endpoint, returning its token in plaintext
+// exactly once — only the hash is stored.
+func (s *Store) CreatePushEndpoint(ctx context.Context, source, label string) (SourceAccount, string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return SourceAccount{}, "", err
+	}
+	token := base64.RawURLEncoding.EncodeToString(buf)
+
+	a, err := scanSourceAccount(s.db.QueryRow(ctx, `
+		insert into source_accounts (account_id, source, mode, label, ingest_token_hash)
+		values ($1, $2, 'push', $3, $4)
+		returning `+sourceAccountCols,
+		s.accountID, source, label, hashToken(token)))
+	if err != nil {
+		return SourceAccount{}, "", err
+	}
+	return a, token, nil
 }
 
 func (s *Store) SourceAccountByID(ctx context.Context, id uuid.UUID) (SourceAccount, error) {
@@ -117,7 +161,6 @@ func (s *Store) SourceAccountByID(ctx context.Context, id uuid.UUID) (SourceAcco
 	return a, err
 }
 
-// ListPullAccounts returns the accounts a sync run can actually poll.
 func (s *Store) ListPullAccounts(ctx context.Context) ([]SourceAccount, error) {
 	rows, err := s.db.Query(ctx,
 		`select `+sourceAccountCols+` from source_accounts where mode = 'pull' order by created_at`)
@@ -137,8 +180,6 @@ func (s *Store) ListPullAccounts(ctx context.Context) ([]SourceAccount, error) {
 	return accounts, rows.Err()
 }
 
-// SourceAccountRow decorates an account with its sync state, which is what the
-// UI needs to show whether a source is actually working.
 type SourceAccountRow struct {
 	SourceAccount
 	LastSyncedAt *time.Time `json:"last_synced_at,omitempty"`
@@ -147,7 +188,7 @@ type SourceAccountRow struct {
 
 func (s *Store) ListSourceAccounts(ctx context.Context) ([]SourceAccountRow, error) {
 	rows, err := s.db.Query(ctx, `
-		select sa.id, sa.source, sa.mode, sa.label,
+		select sa.id, sa.account_id, sa.source, sa.mode, sa.label,
 		       coalesce(sa.external_account_id, ''), coalesce(sa.credentials_ref, ''),
 		       ss.last_synced_at, coalesce(ss.last_error, '')
 		from source_accounts sa
@@ -161,7 +202,7 @@ func (s *Store) ListSourceAccounts(ctx context.Context) ([]SourceAccountRow, err
 	accounts := []SourceAccountRow{}
 	for rows.Next() {
 		var r SourceAccountRow
-		if err := rows.Scan(&r.ID, &r.Source, &r.Mode, &r.Label,
+		if err := rows.Scan(&r.ID, &r.AccountID, &r.Source, &r.Mode, &r.Label,
 			&r.ExternalAccountID, &r.CredentialsRef, &r.LastSyncedAt, &r.LastError); err != nil {
 			return nil, err
 		}
@@ -185,67 +226,27 @@ func (s *Store) GetSyncState(ctx context.Context, id uuid.UUID) (SyncState, erro
 		from sync_state where source_account_id = $1`, id,
 	).Scan(&st.Cursor, &st.LastSyncedAt, &st.LastError)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// Never synced is not an error, just an empty state.
 		return SyncState{}, nil
 	}
 	return st, err
 }
 
-// SaveSyncState persists progress. LastSyncedAt is coalesced rather than
-// overwritten so a failed run records its error without erasing the timestamp
-// of the last run that actually worked.
+// SaveSyncState coalesces LastSyncedAt so a failed run records its error
+// without erasing the timestamp of the last run that worked.
 func (s *Store) SaveSyncState(ctx context.Context, id uuid.UUID, st SyncState) error {
 	_, err := s.db.Exec(ctx, `
-		insert into sync_state (source_account_id, cursor, last_synced_at, last_error)
-		values ($1, nullif($2, ''), $3, nullif($4, ''))
+		insert into sync_state (account_id, source_account_id, cursor, last_synced_at, last_error)
+		values ($1, $2, nullif($3, ''), $4, nullif($5, ''))
 		on conflict (source_account_id) do update set
 			cursor         = excluded.cursor,
 			last_synced_at = coalesce(excluded.last_synced_at, sync_state.last_synced_at),
 			last_error     = excluded.last_error`,
-		id, st.Cursor, st.LastSyncedAt, st.LastError)
+		s.accountID, id, st.Cursor, st.LastSyncedAt, st.LastError)
 	return err
-}
-
-func hashToken(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
-}
-
-// CreatePushEndpoint mints a webhook endpoint and returns its token in
-// plaintext exactly once — only the hash is stored, so a lost token means
-// minting a new endpoint rather than recovering the old one.
-func (s *Store) CreatePushEndpoint(ctx context.Context, source, label string) (SourceAccount, string, error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return SourceAccount{}, "", err
-	}
-	token := base64.RawURLEncoding.EncodeToString(buf)
-
-	a, err := scanSourceAccount(s.db.QueryRow(ctx, `
-		insert into source_accounts (source, mode, label, ingest_token_hash)
-		values ($1, 'push', $2, $3)
-		returning `+sourceAccountCols,
-		source, label, hashToken(token)))
-	if err != nil {
-		return SourceAccount{}, "", err
-	}
-	return a, token, nil
-}
-
-func (s *Store) SourceAccountByToken(ctx context.Context, token string) (SourceAccount, error) {
-	a, err := scanSourceAccount(s.db.QueryRow(ctx,
-		`select `+sourceAccountCols+` from source_accounts where ingest_token_hash = $1`,
-		hashToken(token)))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return SourceAccount{}, ErrNotFound
-	}
-	return a, err
 }
 
 // ── ingest log ───────────────────────────────────────────────────────────
 
-// LogIngest records every inbound request, accepted or not. Failures are the
-// whole point: raw_records only holds what succeeded.
 func (s *Store) LogIngest(ctx context.Context, accountID *uuid.UUID, body []byte, status, errMsg string) error {
 	const maxLoggedBody = 64 << 10
 
@@ -254,40 +255,37 @@ func (s *Store) LogIngest(ctx context.Context, accountID *uuid.UUID, body []byte
 		stored = string(body)
 	}
 
-	var acct any
+	var src any
 	if accountID != nil {
-		acct = *accountID
+		src = *accountID
 	}
 
 	_, err := s.db.Exec(ctx, `
-		insert into ingest_log (source_account_id, body, status, error)
-		values ($1, $2, $3, nullif($4, ''))`,
-		acct, stored, status, errMsg)
+		insert into ingest_log (account_id, source_account_id, body, status, error)
+		values ($1, $2, $3, $4, nullif($5, ''))`,
+		s.accountID, src, stored, status, errMsg)
 	return err
 }
 
 // ── capture layer ────────────────────────────────────────────────────────
 
-// InsertRawRecord is a no-op when this exact payload version already exists,
-// so re-fetching unchanged records costs nothing while a genuine upstream edit
-// is kept alongside the original.
 func (s *Store) InsertRawRecord(ctx context.Context, r core.RawRecord) error {
 	_, err := s.db.Exec(ctx, `
-		insert into raw_records (source_account_id, external_id, payload, content_hash)
-		values ($1, $2, $3, $4)
+		insert into raw_records (account_id, source_account_id, external_id, payload, content_hash)
+		values ($1, $2, $3, $4, $5)
 		on conflict (source_account_id, external_id, content_hash) do nothing`,
-		r.SourceAccountID, r.ExternalID, string(r.Payload), r.ContentHash())
+		s.accountID, r.SourceAccountID, r.ExternalID, string(r.Payload), r.ContentHash())
 	return err
 }
 
-// UpsertEvent writes an event and reports whether it was newly created. The
-// xmax trick distinguishes insert from update: on a freshly inserted row xmax
-// is 0, on one updated by ON CONFLICT it is the current transaction ID.
+// UpsertEvent writes an event and reports whether it was newly created. On a
+// freshly inserted row xmax is 0; on one updated by ON CONFLICT it is the
+// current transaction ID.
 func (s *Store) UpsertEvent(ctx context.Context, e core.Event) (created bool, err error) {
 	err = s.db.QueryRow(ctx, `
-		insert into events (id, source_account_id, external_id, kind, subject_key,
-		                    title, url, occurred_at, payload)
-		values ($1, $2, $3, $4, nullif($5, ''), $6, nullif($7, ''), $8, $9)
+		insert into events (id, account_id, source_account_id, external_id, kind,
+		                    subject_key, title, url, occurred_at, payload)
+		values ($1, $2, $3, $4, $5, nullif($6, ''), $7, nullif($8, ''), $9, $10)
 		on conflict (source_account_id, external_id, kind) do update set
 			subject_key = excluded.subject_key,
 			title       = excluded.title,
@@ -296,7 +294,7 @@ func (s *Store) UpsertEvent(ctx context.Context, e core.Event) (created bool, er
 			payload     = excluded.payload,
 			ingested_at = now()
 		returning (xmax = 0)`,
-		e.ID, e.SourceAccountID, e.ExternalID, e.Kind, e.SubjectKey,
+		e.ID, s.accountID, e.SourceAccountID, e.ExternalID, e.Kind, e.SubjectKey,
 		e.Title, e.URL, e.OccurredAt, string(e.Payload),
 	).Scan(&created)
 	return created, err
@@ -304,7 +302,6 @@ func (s *Store) UpsertEvent(ctx context.Context, e core.Event) (created bool, er
 
 // ── reads ────────────────────────────────────────────────────────────────
 
-// EventRow is an event decorated with where it came from, for the timeline.
 type EventRow struct {
 	core.Event
 	Source      string `json:"source"`

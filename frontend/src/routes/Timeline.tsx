@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { createEvent, listEvents, type EventRow } from '../api'
-import Sources from '../components/Sources'
 
 // Suggestions, not a fixed list — the input stays free text. The ones that
 // matter most here are the kinds no API will ever hand you.
@@ -34,7 +33,7 @@ function timeLabel(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
 }
 
-export default function Home() {
+export default function Timeline() {
   const [events, setEvents] = useState<EventRow[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -111,14 +110,10 @@ export default function Home() {
   }, [events])
 
   return (
-    <div className="page">
-      <header className="page__header">
-        <h1 className="wordmark">hacker tracker</h1>
-        <p className="page__tagline">A record of what you actually did.</p>
-      </header>
+    <>
+      <h1 className="page__title">Timeline</h1>
 
       <div className="layout">
-        <div className="column">
         <section className="panel" aria-labelledby="capture-heading">
           <h2 id="capture-heading" className="panel__title">
             Capture
@@ -201,9 +196,6 @@ export default function Home() {
           </form>
         </section>
 
-        <Sources onSynced={() => void refresh()} />
-        </div>
-
         <section className="panel" aria-labelledby="timeline-heading">
           <h2 id="timeline-heading" className="panel__title">
             Timeline
@@ -252,6 +244,6 @@ export default function Home() {
           </ol>
         </section>
       </div>
-    </div>
+    </>
   )
 }

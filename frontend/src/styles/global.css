@@ -36,28 +36,90 @@ h3 {
   isolation: isolate;
 }
 
-/* Layout */
+/* App shell */
 
-.page {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: var(--space-8) var(--space-6) var(--space-12);
+.app {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
 }
 
-.page__header {
-  margin-bottom: var(--space-8);
+@media (min-width: 48rem) {
+  .app {
+    grid-template-columns: 13rem minmax(0, 1fr);
+  }
+}
+
+.sidebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+}
+
+@media (min-width: 48rem) {
+  .sidebar {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    display: block;
+    height: 100vh;
+    padding: var(--space-8) var(--space-6);
+    border-bottom: 0;
+    border-right: 1px solid var(--color-border);
+  }
 }
 
 .wordmark {
-  font-size: var(--text-2xl);
+  display: block;
+  font-size: var(--text-lg);
   font-weight: 400;
   letter-spacing: var(--tracking-wide);
   color: var(--color-text);
+  text-decoration: none;
 }
 
-.page__tagline {
-  margin-top: var(--space-2);
+.nav {
+  display: flex;
+  gap: var(--space-1);
+}
+
+@media (min-width: 48rem) {
+  .nav {
+    display: grid;
+    margin-top: var(--space-8);
+  }
+}
+
+.nav__link {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
   color: var(--color-text-muted);
+  text-decoration: none;
+  border-radius: var(--radius);
+}
+
+.nav__link:hover {
+  color: var(--color-text);
+  background-color: var(--color-surface);
+}
+
+.nav__link--active {
+  color: var(--color-text);
+  background-color: var(--color-surface-raised);
+}
+
+.content {
+  min-width: 0;
+  padding: var(--space-8) var(--space-6) var(--space-12);
+}
+
+.page__title {
+  font-size: var(--text-xl);
+  font-weight: 400;
+  margin-bottom: var(--space-6);
 }
 
 .layout {
@@ -67,21 +129,15 @@ h3 {
   grid-template-columns: minmax(0, 1fr);
 }
 
-@media (min-width: 60rem) {
+@media (min-width: 64rem) {
   .layout {
     grid-template-columns: 22rem minmax(0, 1fr);
   }
 
-  .column {
+  .layout > .panel:first-child {
     position: sticky;
     top: var(--space-8);
   }
-}
-
-.column {
-  display: grid;
-  gap: var(--space-6);
-  align-content: start;
 }
 
 /* Panels */
@@ -107,13 +163,18 @@ h3 {
   color: var(--color-text-muted);
 }
 
+.panel__hint code {
+  font-family: var(--font-mono);
+  color: var(--color-text);
+}
+
 .counter {
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
   color: var(--color-text-faint);
 }
 
-/* Form */
+/* Forms */
 
 .form {
   display: grid;
@@ -162,6 +223,50 @@ h3 {
   outline-offset: 1px;
 }
 
+.field__prefixed {
+  display: flex;
+  align-items: stretch;
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.field__prefixed:focus-within {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.field__prefix {
+  display: grid;
+  place-items: center;
+  padding-inline: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--color-text-faint);
+  border-right: 1px solid var(--color-border);
+}
+
+/* The input already sits inside the bordered wrapper. */
+.field__prefixed .field__input {
+  border: 0;
+  border-radius: 0;
+  background-color: transparent;
+}
+
+.field__prefixed .field__input:focus-visible {
+  outline: none;
+}
+
+.field__help {
+  font-size: 0.75rem;
+  color: var(--color-text-faint);
+}
+
+.field__help code {
+  font-family: var(--font-mono);
+  color: var(--color-text-muted);
+}
+
 .button {
   justify-self: start;
   padding: var(--space-2) var(--space-4);
@@ -176,6 +281,22 @@ h3 {
 .button:disabled {
   background-color: var(--color-accent-dim);
   cursor: not-allowed;
+}
+
+.button--quiet {
+  color: var(--color-text);
+  background-color: transparent;
+  border: 1px solid var(--color-border);
+  font-size: var(--text-sm);
+}
+
+.button--quiet:hover:not(:disabled) {
+  border-color: var(--color-accent-dim);
+}
+
+.button--quiet:disabled {
+  background-color: transparent;
+  color: var(--color-text-faint);
 }
 
 .alert {
@@ -271,6 +392,10 @@ h3 {
   gap: var(--space-3);
 }
 
+.sources__since {
+  margin-top: var(--space-6);
+}
+
 .source {
   display: grid;
   gap: var(--space-2);
@@ -301,66 +426,126 @@ h3 {
   color: var(--color-text-muted);
 }
 
-.button--quiet {
-  color: var(--color-text);
-  background-color: transparent;
-  border: 1px solid var(--color-border);
-  font-size: var(--text-sm);
+/* Sign-in */
+
+.signin {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
 }
 
-.button--quiet:hover:not(:disabled) {
-  border-color: var(--color-accent-dim);
-}
-
-.button--quiet:disabled {
-  background-color: transparent;
-  color: var(--color-text-faint);
-}
-
-.field__prefixed {
-  display: flex;
-  align-items: stretch;
-  background-color: var(--color-bg);
+.signin__card {
+  width: min(23rem, 100%);
+  display: grid;
+  gap: var(--space-6);
+  padding: var(--space-8);
+  background-color: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
 }
 
-.field__prefixed:focus-within {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 1px;
-}
-
-.field__prefix {
+.signin__intro {
   display: grid;
-  place-items: center;
-  padding-inline: var(--space-2);
-  font-family: var(--font-mono);
+  gap: var(--space-2);
+}
+
+.signin__tagline {
+  color: var(--color-text-muted);
   font-size: var(--text-sm);
-  color: var(--color-text-faint);
-  border-right: 1px solid var(--color-border);
 }
 
-/* The input already sits inside the bordered wrapper. */
-.field__prefixed .field__input {
-  border: 0;
-  border-radius: 0;
-  background-color: transparent;
+.signin__dev {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
 }
 
-.field__prefixed .field__input:focus-visible {
-  outline: none;
+/*
+ * Sign in with Google button — built to Google's published branding spec, dark
+ * variant, since this app is dark throughout:
+ *
+ *   fill #131314, stroke #8E918F, 12px before the mark and 10px after,
+ *   14/20 type, and the standard-colour mark left unaltered.
+ *
+ * These are deliberately literal values rather than design tokens: they are
+ * Google's, not ours, and must not shift if the palette is re-themed.
+ */
+.gsi {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 12px;
+  font-family: 'Google Sans', var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0.25px;
+  color: #e3e3e3;
+  background-color: #131314;
+  border: 1px solid #8e918f;
+  border-radius: 20px;
+  text-decoration: none;
+  cursor: pointer;
 }
 
-.field__help {
+.gsi:hover {
+  background-color: #1c1c1d;
+}
+
+.gsi:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.gsi__mark {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+.gsi__label {
+  /* Keeps the label optically centred against the mark's leading padding. */
+  padding-right: 2px;
+}
+
+/* Sidebar footer */
+
+.sidebar__user {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  min-width: 0;
+}
+
+@media (min-width: 48rem) {
+  .sidebar__user {
+    display: grid;
+    justify-items: start;
+    gap: var(--space-1);
+    margin: var(--space-8) 0 0;
+  }
+}
+
+.sidebar__email {
   font-size: 0.75rem;
   color: var(--color-text-faint);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.field__help code {
-  font-family: var(--font-mono);
-  color: var(--color-text-muted);
-}
-
-.sources__since {
-  margin-top: var(--space-6);
+.sidebar__signout {
+  font: inherit;
+  font-size: var(--text-sm);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
 }

@@ -102,3 +102,49 @@ func redact(url string) string {
 	}
 	return url[:scheme] + "***" + url[at:]
 }
+
+// VerifyIsolation asserts that row-level security will actually be enforced.
+//
+// This exists because the failure it catches is silent. Policies can be
+// enabled, forced, and completely inert: superusers and BYPASSRLS roles ignore
+// them, and the role Compose creates from POSTGRES_USER is a superuser. A
+// misconfiguration here would not error, it would simply serve every account's
+// data to everyone. Refusing to boot is the only safe response.
+func VerifyIsolation(ctx context.Context, pool *pgxpool.Pool, appRole string) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, "set local role "+appRole); err != nil {
+		return fmt.Errorf("could not assume %s (has migration 00002 run?): %w", appRole, err)
+	}
+
+	var current string
+	var superuser, bypass bool
+	if err := tx.QueryRow(ctx, `
+		select current_user,
+		       coalesce((select rolsuper from pg_roles where rolname = current_user), false),
+		       coalesce((select rolbypassrls from pg_roles where rolname = current_user), false)`,
+	).Scan(&current, &superuser, &bypass); err != nil {
+		return err
+	}
+	if current != appRole {
+		return fmt.Errorf("expected to be running as %s, got %s", appRole, current)
+	}
+	if superuser || bypass {
+		return fmt.Errorf("%s can bypass row-level security (superuser=%t bypassrls=%t); "+
+			"account isolation would not be enforced", appRole, superuser, bypass)
+	}
+
+	// Without app.account_id set, every content table must be empty.
+	var visible int
+	if err := tx.QueryRow(ctx, `select count(*) from events`).Scan(&visible); err != nil {
+		return fmt.Errorf("could not probe events: %w", err)
+	}
+	if visible != 0 {
+		return fmt.Errorf("row-level security is not filtering: %d events visible with no account set", visible)
+	}
+	return nil
+}

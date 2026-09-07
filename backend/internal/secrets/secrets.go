@@ -54,8 +54,17 @@ var ErrPastedCredential = errors.New(
 		"and enter the variable's name here instead. " +
 		"If you pasted a real token, revoke it — it may now be in your browser history")
 
+// Resolver turns credential references into credentials.
+//
+// AllowEnv gates the env: scheme, which is safe for a self-hosted single
+// account and unsafe once there are several: two accounts both referencing
+// env:GITHUB_TOKEN would share one token, and each would see the other's GitHub
+// data captured under their own name. Hosted deployments must therefore refuse
+// it until per-account encrypted credentials exist.
+type Resolver struct{ AllowEnv bool }
+
 // Resolve turns a reference like "env:GITHUB_TOKEN" into the secret it names.
-func Resolve(ref string) (string, error) {
+func (rs Resolver) Resolve(ref string) (string, error) {
 	if strings.TrimSpace(ref) == "" {
 		return "", errors.New("no credentials configured for this source")
 	}
@@ -76,6 +85,12 @@ func Resolve(ref string) (string, error) {
 
 	switch scheme {
 	case "env":
+		if !rs.AllowEnv {
+			return "", errors.New(
+				"environment-variable credentials are disabled on this deployment, because a " +
+					"shared variable would let one account read another's data. Per-account " +
+					"credential storage is not built yet")
+		}
 		if !envNamePattern.MatchString(name) {
 			return "", errors.New("that is not a valid environment variable name: use letters, digits and underscores, e.g. GITHUB_TOKEN")
 		}
