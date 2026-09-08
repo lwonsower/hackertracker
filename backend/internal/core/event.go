@@ -36,7 +36,7 @@ var eventNamespace = uuid.MustParse("9a5b0f8c-4c1e-4f0a-8b3d-6f2e1c7a9d40")
 //     on a laptop and on a future hosted instance.
 //
 // What it emphatically does not make safe is deleting rows. annotations,
-// event_tags and project_events are ON DELETE CASCADE, so `truncate events` or
+// event_tags and arc_events are ON DELETE CASCADE, so `truncate events` or
 // `delete from events` destroys the irreplaceable half of the database.
 // Re-normalisation is an UPSERT PASS over raw_records — never a rebuild.
 func EventID(sourceAccountID uuid.UUID, externalID, kind string) uuid.UUID {

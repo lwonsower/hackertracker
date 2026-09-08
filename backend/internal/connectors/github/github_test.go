@@ -327,8 +327,8 @@ func TestSyncReportsAuthFailureClearly(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error on 401")
 	}
-	if !strings.Contains(err.Error(), "credentials_ref") {
-		t.Errorf("401 should point at the credential, got: %v", err)
+	if !strings.Contains(err.Error(), "401") {
+		t.Errorf("401 should be reported clearly, got: %v", err)
 	}
 }
 

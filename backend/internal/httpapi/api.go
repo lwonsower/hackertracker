@@ -18,6 +18,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -56,12 +57,17 @@ func (a *API) Routes(mux *http.ServeMux, protect func(http.Handler) http.Handler
 	mux.HandleFunc("POST /api/ingest/{token}", a.handleIngest)
 
 	guarded := map[string]http.HandlerFunc{
-		"GET /api/me":                       a.handleMe,
-		"POST /api/events":                  a.handleCreateEvent,
-		"GET /api/events":                   a.handleListEvents,
-		"GET /api/source-accounts":          a.handleListSourceAccounts,
-		"POST /api/source-accounts":         a.handleCreateSourceAccount,
+		"GET /api/me":                         a.handleMe,
+		"POST /api/events":                    a.handleCreateEvent,
+		"GET /api/events":                     a.handleListEvents,
+		"GET /api/source-accounts":            a.handleListSourceAccounts,
+		"POST /api/source-accounts":           a.handleCreateSourceAccount,
 		"POST /api/source-accounts/{id}/sync": a.handleSync,
+		"GET /api/credentials":                a.handleListCredentials,
+		"DELETE /api/credentials/{id}":        a.handleDeleteCredential,
+	}
+	for pattern, handler := range a.arcRoutes() {
+		guarded[pattern] = handler
 	}
 	for pattern, handler := range guarded {
 		mux.Handle(pattern, protect(handler))
@@ -346,6 +352,7 @@ func (a *API) handleCreateSourceAccount(w http.ResponseWriter, r *http.Request) 
 		Source         string `json:"source"`
 		Mode           string `json:"mode"`
 		CredentialsRef string `json:"credentials_ref"`
+		Token          string `json:"token"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, maxBodyBytes)).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "could not read request body as JSON")
@@ -359,7 +366,7 @@ func (a *API) handleCreateSourceAccount(w http.ResponseWriter, r *http.Request) 
 		in.Source = "webhook"
 	}
 	if in.Mode == "pull" {
-		a.createPullAccount(w, r, in.Source, in.Label, in.CredentialsRef)
+		a.createPullAccount(w, r, in.Source, in.Label, in.CredentialsRef, in.Token)
 		return
 	}
 
@@ -386,30 +393,45 @@ func (a *API) handleCreateSourceAccount(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// createPullAccount connects a polling source, verifying the credentials before
+// createPullAccount connects a polling source, verifying the credential before
 // storing anything.
 //
-// Verifying up front matters more than it looks: the characteristic GitHub
-// failure is a token that authenticates fine but can see nothing, which
-// produces syncs that succeed and return zero events.
-func (a *API) createPullAccount(w http.ResponseWriter, r *http.Request, source, label, credentialsRef string) {
+// A token is encrypted and stored per account; credentials_ref (env:NAME) is
+// the self-host alternative. Verifying first matters because the characteristic
+// GitHub failure is a token that authenticates but can see nothing.
+func (a *API) createPullAccount(w http.ResponseWriter, r *http.Request, source, label, credentialsRef, token string) {
 	if source != "github" {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("no pull connector for source %q", source))
 		return
 	}
-	if credentialsRef == "" {
+
+	user, ok := auth.UserFrom(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "not signed in")
+		return
+	}
+
+	plaintext := token
+	if plaintext == "" {
+		if credentialsRef == "" {
+			writeError(w, http.StatusBadRequest, "a token is required")
+			return
+		}
+		// env: references are resolved without a store.
+		resolved, err := a.secrets.Resolve(r.Context(), nil, user.AccountID, credentialsRef)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		plaintext = resolved
+	} else if !a.secrets.CanEncrypt() {
 		writeError(w, http.StatusBadRequest,
-			"credentials_ref is required, e.g. env:GITHUB_TOKEN (a pointer to an environment variable, never the token itself)")
+			"this server has no credentials encryption key configured, so tokens cannot be stored. "+
+				"Set CREDENTIALS_KEY and restart.")
 		return
 	}
 
-	token, err := a.secrets.Resolve(credentialsRef)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	login, err := github.WhoAmI(r.Context(), token, a.githubBaseURL)
+	login, err := github.WhoAmI(r.Context(), plaintext, a.githubBaseURL)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -417,13 +439,81 @@ func (a *API) createPullAccount(w http.ResponseWriter, r *http.Request, source, 
 
 	var acct store.SourceAccount
 	if ok := a.scope(w, r, func(st *store.Store) error {
-		var err error
-		acct, err = st.CreatePullAccount(r.Context(), source, label, login, credentialsRef)
+		ref := credentialsRef
+
+		if token != "" {
+			previous, err := st.CredentialRefForSource(r.Context(), source, label)
+			if err != nil {
+				return err
+			}
+
+			keyID, ciphertext, err := a.secrets.Seal(user.AccountID, token)
+			if err != nil {
+				return err
+			}
+			id, err := st.CreateCredential(r.Context(), label, keyID, ciphertext)
+			if err != nil {
+				return err
+			}
+			ref = "secret:" + id.String()
+
+			// Reconnecting replaces the old secret rather than orphaning it.
+			if old, found := strings.CutPrefix(previous, "secret:"); found {
+				if oldID, err := uuid.Parse(old); err == nil {
+					if err := st.DeleteCredential(r.Context(), oldID); err != nil &&
+						!errors.Is(err, store.ErrNotFound) {
+						return err
+					}
+				}
+			}
+		}
+
+		acct, err = st.CreatePullAccount(r.Context(), source, label, login, ref)
 		return err
 	}); !ok {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"source_account": acct, "login": login})
+}
+
+func (a *API) handleListCredentials(w http.ResponseWriter, r *http.Request) {
+	var creds []store.CredentialRow
+	if ok := a.scope(w, r, func(st *store.Store) error {
+		var err error
+		creds, err = st.ListCredentials(r.Context())
+		return err
+	}); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"credentials": creds})
+}
+
+func (a *API) handleDeleteCredential(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "not a valid credential id")
+		return
+	}
+
+	var inUse []string
+	if ok := a.scope(w, r, func(st *store.Store) error {
+		var err error
+		if inUse, err = st.SourcesUsingCredential(r.Context(), id); err != nil {
+			return err
+		}
+		if len(inUse) > 0 {
+			return nil
+		}
+		return st.DeleteCredential(r.Context(), id)
+	}); !ok {
+		return
+	}
+	if len(inUse) > 0 {
+		writeError(w, http.StatusConflict,
+			fmt.Sprintf("still used by %s; disconnect it first", strings.Join(inUse, ", ")))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) handleSync(w http.ResponseWriter, r *http.Request) {

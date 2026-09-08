@@ -101,8 +101,14 @@ func (r *Runner) Sync(ctx context.Context, acct store.SourceAccount, opts Option
 		return report, fmt.Errorf("no connector registered for source %q", acct.Source)
 	}
 
-	token, err := r.secrets.Resolve(acct.CredentialsRef)
-	if err != nil {
+	// Resolved inside the scope, so row-level security applies to reading the
+	// stored credential too.
+	var token string
+	if err := r.db.Scope(ctx, acct.AccountID, func(st *store.Store) error {
+		var err error
+		token, err = r.secrets.Resolve(ctx, st, acct.AccountID, acct.CredentialsRef)
+		return err
+	}); err != nil {
 		return report, r.fail(ctx, acct, err)
 	}
 

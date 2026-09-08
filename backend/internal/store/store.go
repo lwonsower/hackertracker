@@ -322,7 +322,7 @@ func (s *Store) ListEvents(ctx context.Context, f EventFilter) ([]EventRow, erro
 	rows, err := s.db.Query(ctx, `
 		select e.id, e.external_id, e.kind, coalesce(e.subject_key, ''), e.title,
 		       coalesce(e.url, ''), e.occurred_at, e.payload, sa.source, sa.label
-		from events e
+		from live_events e
 		join source_accounts sa on sa.id = e.source_account_id
 		where e.occurred_at >= $1 and e.occurred_at < $2
 		order by e.occurred_at desc, e.title
@@ -345,4 +345,102 @@ func (s *Store) ListEvents(ctx context.Context, f EventFilter) ([]EventRow, erro
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// ── credentials ──────────────────────────────────────────────────────────
+
+type CredentialRow struct {
+	ID         uuid.UUID  `json:"id"`
+	Label      string     `json:"label"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+}
+
+// Credential returns the stored ciphertext and marks it used. Plaintext never
+// passes through this package.
+func (s *Store) Credential(ctx context.Context, id uuid.UUID) (keyID string, ciphertext []byte, err error) {
+	err = s.db.QueryRow(ctx, `
+		update credentials set last_used_at = now()
+		where id = $1
+		returning key_id, ciphertext`, id,
+	).Scan(&keyID, &ciphertext)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil, ErrNotFound
+	}
+	return keyID, ciphertext, err
+}
+
+func (s *Store) CreateCredential(ctx context.Context, label, keyID string, ciphertext []byte) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := s.db.QueryRow(ctx, `
+		insert into credentials (account_id, label, key_id, ciphertext)
+		values ($1, $2, $3, $4)
+		returning id`,
+		s.accountID, label, keyID, ciphertext).Scan(&id)
+	return id, err
+}
+
+func (s *Store) ListCredentials(ctx context.Context) ([]CredentialRow, error) {
+	rows, err := s.db.Query(ctx, `
+		select id, label, created_at, last_used_at
+		from credentials order by created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []CredentialRow{}
+	for rows.Next() {
+		var c CredentialRow
+		if err := rows.Scan(&c.ID, &c.Label, &c.CreatedAt, &c.LastUsedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteCredential(ctx context.Context, id uuid.UUID) error {
+	tag, err := s.db.Exec(ctx, `delete from credentials where id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SourcesUsingCredential names the sources referencing a credential, so a
+// delete that would break them can be refused with something readable.
+func (s *Store) SourcesUsingCredential(ctx context.Context, id uuid.UUID) ([]string, error) {
+	rows, err := s.db.Query(ctx,
+		`select label from source_accounts where credentials_ref = $1`, "secret:"+id.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	labels := []string{}
+	for rows.Next() {
+		var label string
+		if err := rows.Scan(&label); err != nil {
+			return nil, err
+		}
+		labels = append(labels, label)
+	}
+	return labels, rows.Err()
+}
+
+// CredentialRefForSource returns the existing reference for a source, so
+// reconnecting can replace the old secret instead of orphaning it.
+func (s *Store) CredentialRefForSource(ctx context.Context, source, label string) (string, error) {
+	var ref string
+	err := s.db.QueryRow(ctx, `
+		select coalesce(credentials_ref, '') from source_accounts
+		where source = $1 and label = $2`, source, label).Scan(&ref)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return ref, err
 }

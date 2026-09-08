@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 
-import { connectGitHub, listSources, syncSource, type SourceAccount, type SyncReport } from '../api'
+import {
+  authProviders,
+  connectGitHub,
+  listSources,
+  syncSource,
+  type SourceAccount,
+  type SyncReport,
+} from '../api'
 
 function relative(iso?: string): string {
   if (!iso) return 'never synced'
@@ -43,7 +50,10 @@ function summarise(report: SyncReport): string {
 export default function Sources() {
   const [sources, setSources] = useState<SourceAccount[]>([])
   const [label, setLabel] = useState('GitHub')
+  const [token, setToken] = useState('')
   const [envVar, setEnvVar] = useState('GITHUB_TOKEN')
+  const [useEnvVar, setUseEnvVar] = useState(false)
+  const [selfHost, setSelfHost] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [connectError, setConnectError] = useState<string | null>(null)
   const [syncing, setSyncing] = useState<string | null>(null)
@@ -63,29 +73,42 @@ export default function Sources() {
 
   useEffect(() => {
     void refresh()
+    authProviders()
+      .then((p) => setSelfHost(p.self_host))
+      .catch(() => setSelfHost(false))
   }, [refresh])
 
   async function handleConnect(e: React.FormEvent) {
     e.preventDefault()
-    const name = envVar.trim()
-    if (looksLikeCredential(name)) {
-      setEnvVar('')
-      setConnectError(
-        'That looks like a token, not a variable name. Nothing was sent. ' +
-          'Put it in .env.local (GITHUB_TOKEN=…), restart the server, then enter GITHUB_TOKEN here. ' +
-          'Revoke that token if it was real.',
-      )
-      return
-    }
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-      setConnectError('Use letters, digits and underscores, e.g. GITHUB_TOKEN.')
+
+    if (useEnvVar) {
+      const name = envVar.trim()
+      if (looksLikeCredential(name)) {
+        setEnvVar('')
+        setConnectError(
+          'That looks like a token, not a variable name. Nothing was sent. ' +
+            'Untick the environment-variable option to store the token instead, ' +
+            'and revoke that token if it was real.',
+        )
+        return
+      }
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+        setConnectError('Use letters, digits and underscores, e.g. GITHUB_TOKEN.')
+        return
+      }
+    } else if (!token.trim()) {
+      setConnectError('Paste a personal access token.')
       return
     }
 
     setConnecting(true)
     setConnectError(null)
     try {
-      const { login } = await connectGitHub(label.trim(), `env:${name}`)
+      const { login } = await connectGitHub(
+        label.trim(),
+        useEnvVar ? { credentialsRef: `env:${envVar.trim()}` } : { token: token.trim() },
+      )
+      setToken('')
       setLabel(`GitHub (${login})`)
       await refresh()
     } catch (err) {
@@ -115,17 +138,22 @@ export default function Sources() {
       <h1 className="page__title">Sources</h1>
       <section className="panel">
         <p className="panel__hint">
-          Put your token in <code>.env.local</code>, then enter the <strong>name</strong> of
-          that variable below — not the token. Nothing secret is sent here or stored in the
-          database.
+          Paste a personal access token. It is encrypted before it is stored, and
+          never shown again.
         </p>
 
         <form className="form" onSubmit={handleConnect}>
-          <div className="field-row">
-            <label className="field">
-              <span className="field__label">Label</span>
-              <input className="field__input" value={label} onChange={(e) => setLabel(e.target.value)} required />
-            </label>
+          <label className="field">
+            <span className="field__label">Label</span>
+            <input
+              className="field__input"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              required
+            />
+          </label>
+
+          {useEnvVar ? (
             <label className="field">
               <span className="field__label">Variable name</span>
               <div className="field__prefixed">
@@ -137,16 +165,34 @@ export default function Sources() {
                   placeholder="GITHUB_TOKEN"
                   autoComplete="off"
                   spellCheck={false}
-                  required
                 />
               </div>
             </label>
-          </div>
+          ) : (
+            <label className="field">
+              <span className="field__label">Personal access token</span>
+              <input
+                className="field__input"
+                type="password"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder="github_pat_…"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+          )}
 
-          <p className="field__help">
-            e.g. <code>GITHUB_TOKEN</code>, set as <code>GITHUB_TOKEN=…</code> in{' '}
-            <code>.env.local</code>
-          </p>
+          {selfHost && (
+            <label className="field__help field__toggle">
+              <input
+                type="checkbox"
+                checked={useEnvVar}
+                onChange={(e) => setUseEnvVar(e.target.checked)}
+              />
+              Use an environment variable instead (self-hosted only)
+            </label>
+          )}
 
           {connectError && <p className="alert">{connectError}</p>}
 
