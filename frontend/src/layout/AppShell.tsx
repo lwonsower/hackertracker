@@ -5,6 +5,7 @@ import { me, signOut, type Me } from '../api'
 
 const NAV = [
   { to: '/', label: 'Timeline', end: true },
+  { to: '/arcs', label: 'Arcs', end: false },
   { to: '/sources', label: 'Sources', end: false },
   { to: '/goals', label: 'Goals', end: false },
 ]

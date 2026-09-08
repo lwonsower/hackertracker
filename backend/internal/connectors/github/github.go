@@ -404,7 +404,7 @@ func (c *Connector) pace(ctx context.Context) error {
 func describeFailure(resp *http.Response) error {
 	switch resp.StatusCode {
 	case http.StatusUnauthorized:
-		return fmt.Errorf("github rejected the token (401): check the value of the environment variable named in credentials_ref")
+		return fmt.Errorf("github rejected the token (401): it may be expired, revoked, or mistyped")
 	case http.StatusForbidden:
 		if retry := resp.Header.Get("Retry-After"); retry != "" {
 			return fmt.Errorf("github rate limit hit (403): retry after %s seconds", retry)

@@ -33,7 +33,7 @@ export default function SignIn() {
       .catch(() => setSession('out'))
     authProviders()
       .then(setProviders)
-      .catch(() => setProviders({ google: false, dev: false }))
+      .catch(() => setProviders({ google: false, dev: false, self_host: false }))
   }, [])
 
   const handleDevSignIn = useCallback(async () => {

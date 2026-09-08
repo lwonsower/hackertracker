@@ -105,7 +105,14 @@ func run() error {
 		}
 	}()
 
-	resolver := secrets.Resolver{AllowEnv: selfHosted}
+	resolver, err := secrets.NewResolver(selfHosted, os.Getenv("CREDENTIALS_KEY"))
+	if err != nil {
+		return err
+	}
+	if !resolver.CanEncrypt() {
+		log.Print("CREDENTIALS_KEY is not set, so per-account tokens cannot be stored. " +
+			"Generate one with: echo \"v1:$(openssl rand -base64 32)\"")
+	}
 
 	pipeline := ingest.New()
 	// GitHub payloads are not envelopes, so they get their own normaliser.

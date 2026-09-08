@@ -1,15 +1,18 @@
 package secrets
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestResolveEnv(t *testing.T) {
 	t.Setenv("HT_TEST_TOKEN", "s3cret")
 
-	got, err := (Resolver{AllowEnv: true}).Resolve("env:HT_TEST_TOKEN")
+	got, err := (Resolver{AllowEnv: true}).Resolve(context.Background(), nil, uuid.Nil, "env:HT_TEST_TOKEN")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -28,7 +31,7 @@ func TestResolveRejectsBadRefs(t *testing.T) {
 	}
 	for name, ref := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := (Resolver{AllowEnv: true}).Resolve(ref); err == nil {
+			if _, err := (Resolver{AllowEnv: true}).Resolve(context.Background(), nil, uuid.Nil, ref); err == nil {
 				t.Errorf("expected an error for %q", ref)
 			}
 		})
@@ -78,7 +81,7 @@ func TestResolveEchoesOrdinaryNames(t *testing.T) {
 
 func mustFail(t *testing.T, ref string) error {
 	t.Helper()
-	_, err := (Resolver{AllowEnv: true}).Resolve(ref)
+	_, err := (Resolver{AllowEnv: true}).Resolve(context.Background(), nil, uuid.Nil, ref)
 	if err == nil {
 		t.Fatalf("expected %q to be rejected", ref)
 	}
@@ -90,7 +93,7 @@ func mustFail(t *testing.T, ref string) error {
 func TestResolveRefusesEnvWhenDisallowed(t *testing.T) {
 	t.Setenv("HT_TEST_TOKEN", "s3cret")
 
-	if _, err := (Resolver{AllowEnv: false}).Resolve("env:HT_TEST_TOKEN"); err == nil {
+	if _, err := (Resolver{AllowEnv: false}).Resolve(context.Background(), nil, uuid.Nil, "env:HT_TEST_TOKEN"); err == nil {
 		t.Fatal("expected env: credentials to be refused")
 	} else if !strings.Contains(err.Error(), "another") {
 		t.Errorf("the refusal should explain why: %v", err)

@@ -130,8 +130,9 @@ func unauthorized(w http.ResponseWriter) {
 
 func (s *Service) handleProviders(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"google": s.Configured(),
-		"dev":    s.devSignInAllowed(),
+		"google":    s.Configured(),
+		"dev":       s.devSignInAllowed(),
+		"self_host": s.cfg.AdoptOrphanAccount,
 	})
 }
 

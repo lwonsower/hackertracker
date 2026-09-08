@@ -549,3 +549,257 @@ h3 {
   cursor: pointer;
   text-align: left;
 }
+
+.field__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+}
+
+/* Arcs */
+
+/* Narrative and evidence carry equal weight, so neither gets the narrow rail
+   the sidebar-shaped .layout gives its first child. */
+@media (min-width: 64rem) {
+  .layout--even {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .layout--even > .panel:first-child {
+    position: static;
+  }
+}
+
+.crumb {
+  display: inline-block;
+  margin-bottom: var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  text-decoration: none;
+}
+
+.crumb:hover {
+  color: var(--color-text);
+}
+
+.arcs {
+  list-style: none;
+  padding: 0;
+  margin-top: var(--space-6);
+  display: grid;
+  gap: var(--space-3);
+}
+
+.arc-card {
+  padding: var(--space-3);
+  background-color: var(--color-surface-raised);
+  border-radius: var(--radius);
+}
+
+.arc-card__link {
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.arc-card__title {
+  font-size: var(--text-base);
+}
+
+.arc-card__link:hover .arc-card__title {
+  text-decoration: underline;
+  text-decoration-color: var(--color-accent-dim);
+  text-underline-offset: 2px;
+}
+
+.arc-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.arc-card__stat {
+  font-size: 0.75rem;
+  color: var(--color-text-faint);
+}
+
+.arc-card__summary {
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  white-space: pre-wrap;
+}
+
+/* A dropped arc is not a failure, so it is dimmed rather than coloured red. */
+.badge--done {
+  color: var(--color-text-muted);
+  border-color: var(--color-border);
+}
+
+.badge--dropped {
+  color: var(--color-text-faint);
+  border-color: var(--color-border);
+}
+
+.arc-head {
+  margin-bottom: var(--space-6);
+}
+
+.arc-head__top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.arc-head__title {
+  margin-bottom: 0;
+}
+
+.arc-head__summary {
+  margin-top: var(--space-3);
+  color: var(--color-text-muted);
+  white-space: pre-wrap;
+}
+
+.arc-head__form {
+  margin-top: 0;
+}
+
+.arc-head__actions {
+  display: flex;
+  gap: var(--space-3);
+}
+
+/* Narrative */
+
+.entries {
+  list-style: none;
+  padding: 0;
+  margin-top: var(--space-6);
+  display: grid;
+  gap: var(--space-3);
+}
+
+/* A rule down the left makes the sequence read as one running log rather than
+   as a stack of unrelated notes. */
+.entry {
+  padding-left: var(--space-4);
+  border-left: 2px solid var(--color-border);
+}
+
+.entry__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.entry__date {
+  font-size: 0.75rem;
+  color: var(--color-text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.entry__body {
+  margin-top: var(--space-1);
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+}
+
+/* Evidence */
+
+.panel__action {
+  margin-left: auto;
+}
+
+.evidence {
+  list-style: none;
+  padding: 0;
+  margin-top: var(--space-6);
+  display: grid;
+  gap: var(--space-3);
+}
+
+.link-button {
+  padding: 0;
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--color-text-faint);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.link-button:hover:not(:disabled) {
+  color: var(--color-text);
+}
+
+.link-button:disabled {
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+.evidence .link-button {
+  margin-left: auto;
+}
+
+/* Add evidence */
+
+.finder {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-6);
+  padding: var(--space-4);
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.finder__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.candidates {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: var(--space-1);
+  /* Capped so a wide search cannot push the file button off the screen. */
+  max-height: 22rem;
+  overflow-y: auto;
+}
+
+.candidate__label {
+  display: flex;
+  align-items: start;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.candidate__label:hover {
+  background-color: var(--color-surface-raised);
+}
+
+.candidate__body {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.candidate__title {
+  font-size: var(--text-sm);
+}
+
+.candidate__meta {
+  font-size: 0.75rem;
+  color: var(--color-text-faint);
+}
