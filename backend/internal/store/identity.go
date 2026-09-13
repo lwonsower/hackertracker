@@ -221,25 +221,31 @@ type AuthState struct {
 	Nonce      string
 	Verifier   string
 	RedirectTo string
+	// Purpose separates the sign-in handshake from the calendar one, so a code
+	// issued for one cannot be redeemed at the other's callback.
+	Purpose string
 }
 
 func (d *DB) SaveAuthState(ctx context.Context, s AuthState, ttl time.Duration) error {
+	if s.Purpose == "" {
+		s.Purpose = "signin"
+	}
 	_, err := d.pool.Exec(ctx, `
-		insert into auth_states (state, nonce, verifier, redirect_to, expires_at)
-		values ($1, $2, $3, nullif($4, ''), $5)`,
-		s.State, s.Nonce, s.Verifier, s.RedirectTo, time.Now().UTC().Add(ttl))
+		insert into auth_states (state, nonce, verifier, redirect_to, purpose, expires_at)
+		values ($1, $2, $3, nullif($4, ''), $5, $6)`,
+		s.State, s.Nonce, s.Verifier, s.RedirectTo, s.Purpose, time.Now().UTC().Add(ttl))
 	return err
 }
 
 // ConsumeAuthState deletes and returns the state in one statement, so a
 // replayed callback finds nothing.
-func (d *DB) ConsumeAuthState(ctx context.Context, state string) (AuthState, error) {
+func (d *DB) ConsumeAuthState(ctx context.Context, state, purpose string) (AuthState, error) {
 	var s AuthState
 	err := d.pool.QueryRow(ctx, `
 		delete from auth_states
-		where state = $1 and expires_at > now()
-		returning state, nonce, verifier, coalesce(redirect_to, '')`, state,
-	).Scan(&s.State, &s.Nonce, &s.Verifier, &s.RedirectTo)
+		where state = $1 and purpose = $2 and expires_at > now()
+		returning state, nonce, verifier, coalesce(redirect_to, ''), purpose`, state, purpose,
+	).Scan(&s.State, &s.Nonce, &s.Verifier, &s.RedirectTo, &s.Purpose)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AuthState{}, ErrNotFound
 	}

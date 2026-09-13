@@ -127,6 +127,55 @@ func (s *Store) CreatePullAccount(ctx context.Context, source, label, externalAc
 		s.accountID, source, label, externalAccountID, credentialsRef))
 }
 
+// CreateConnectedAccount upserts a source that holds credentials and fetches
+// on demand. Reconnecting replaces the reference rather than adding a source.
+func (s *Store) CreateConnectedAccount(ctx context.Context, source, mode, label, externalAccountID, credentialsRef string) (SourceAccount, error) {
+	return scanSourceAccount(s.db.QueryRow(ctx, `
+		insert into source_accounts (account_id, source, mode, label, external_account_id, credentials_ref)
+		values ($1, $2, $3, $4, nullif($5, ''), $6)
+		on conflict (account_id, source, label) do update set
+			mode                = excluded.mode,
+			external_account_id = excluded.external_account_id,
+			credentials_ref     = excluded.credentials_ref
+		returning `+sourceAccountCols,
+		s.accountID, source, mode, label, externalAccountID, credentialsRef))
+}
+
+// SourceAccountBySource finds a connected source by kind, for the single
+// calendar an account has today.
+func (s *Store) SourceAccountBySource(ctx context.Context, source string) (SourceAccount, error) {
+	a, err := scanSourceAccount(s.db.QueryRow(ctx,
+		`select `+sourceAccountCols+` from source_accounts where source = $1 order by created_at limit 1`, source))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SourceAccount{}, ErrNotFound
+	}
+	return a, err
+}
+
+// ExistingExternalIDs reports which of these ids this source has already
+// turned into events, so a proposal list can hide what is already recorded.
+func (s *Store) ExistingExternalIDs(ctx context.Context, sourceAccountID uuid.UUID, ids []string) (map[string]bool, error) {
+	found := map[string]bool{}
+	if len(ids) == 0 {
+		return found, nil
+	}
+	rows, err := s.db.Query(ctx,
+		`select external_id from events where source_account_id = $1 and external_id = any($2)`,
+		sourceAccountID, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		found[id] = true
+	}
+	return found, rows.Err()
+}
+
 func hashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
@@ -209,6 +258,21 @@ func (s *Store) ListSourceAccounts(ctx context.Context) ([]SourceAccountRow, err
 		accounts = append(accounts, r)
 	}
 	return accounts, rows.Err()
+}
+
+// ClearCredentialRef drops a source's link to its secret while leaving the
+// source and its events in place. Deleting the source would cascade to every
+// event it produced, and those are the part worth keeping.
+func (s *Store) ClearCredentialRef(ctx context.Context, id uuid.UUID) error {
+	tag, err := s.db.Exec(ctx,
+		`update source_accounts set credentials_ref = null where id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ── sync state ───────────────────────────────────────────────────────────

@@ -2,18 +2,26 @@ import { useEffect, useState } from 'react'
 import { Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom'
 
 import { me, signOut, type Me } from '../api'
+import CaptureDialog from '../components/CaptureDialog'
 
 const NAV = [
   { to: '/', label: 'Timeline', end: true },
   { to: '/arcs', label: 'Arcs', end: false },
   { to: '/sources', label: 'Sources', end: false },
-  { to: '/goals', label: 'Goals', end: false },
 ]
 
 type State = { status: 'loading' } | { status: 'out' } | { status: 'in'; user: Me }
 
+/** What pages read from the router outlet. */
+export type ShellContext = {
+  /** Bumped on every successful capture, so a page can re-fetch on change. */
+  captures: number
+}
+
 export default function AppShell() {
   const [state, setState] = useState<State>({ status: 'loading' })
+  const [capturing, setCapturing] = useState(false)
+  const [captures, setCaptures] = useState(0)
   const navigate = useNavigate()
 
   // One check at the shell, so no page has to think about auth. Any failure
@@ -41,6 +49,12 @@ export default function AppShell() {
           hacker tracker
         </NavLink>
 
+        {/* Capture lives in the shell rather than on the timeline, because the
+            thing worth recording occurs to you on whatever page you are on. */}
+        <button className="button sidebar__capture" onClick={() => setCapturing(true)}>
+          Record something
+        </button>
+
         <nav className="nav" aria-label="Main">
           {NAV.map(({ to, label, end }) => (
             <NavLink
@@ -65,8 +79,14 @@ export default function AppShell() {
       </header>
 
       <main className="content">
-        <Outlet />
+        <Outlet context={{ captures } satisfies ShellContext} />
       </main>
+
+      <CaptureDialog
+        open={capturing}
+        onClose={() => setCapturing(false)}
+        onSaved={() => setCaptures((n) => n + 1)}
+      />
     </div>
   )
 }

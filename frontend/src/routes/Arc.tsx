@@ -5,13 +5,17 @@ import {
   addArcEntry,
   arcCandidates,
   attachEvents,
+  createArc,
   detachEvent,
   getArc,
+  isEmpty,
+  listArcs,
   updateArc,
   ENTRY_KINDS,
   type Arc,
   type ArcEntry,
   type ArcEvent,
+  type ArcRow,
 } from '../api'
 
 function dayLabel(iso: string): string {
@@ -38,15 +42,19 @@ export default function ArcPage() {
   const [arc, setArc] = useState<Arc | null>(null)
   const [entries, setEntries] = useState<ArcEntry[]>([])
   const [events, setEvents] = useState<ArcEvent[]>([])
+  const [children, setChildren] = useState<ArcRow[]>([])
+  const [ancestors, setAncestors] = useState<Arc[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
-      const { arc, entries, events } = await getArc(id)
+      const { arc, entries, events, children, ancestors } = await getArc(id)
       setArc(arc)
       setEntries(entries)
       setEvents(events)
+      setChildren(children)
+      setAncestors(ancestors)
       setLoadError(null)
     } catch (err) {
       setLoadError(message(err))
@@ -65,11 +73,24 @@ export default function ArcPage() {
 
   return (
     <>
-      <Link className="crumb" to="/arcs">
-        ← Arcs
-      </Link>
+      <nav className="crumbs" aria-label="Where this sits">
+        <Link className="crumb" to="/arcs">
+          Arcs
+        </Link>
+        {/* Ancestors come back nearest-first; read them root-first. */}
+        {[...ancestors].reverse().map((up) => (
+          <span key={up.id}>
+            <span className="crumbs__sep">/</span>
+            <Link className="crumb" to={`/arcs/${up.id}`}>
+              {up.title}
+            </Link>
+          </span>
+        ))}
+      </nav>
 
-      <Header arc={arc} onSaved={setArc} />
+      <Header arc={arc} onSaved={(saved) => { setArc(saved); void load() }} />
+
+      <SubArcs arcId={id} items={children} onAdded={() => void load()} />
 
       <div className="layout layout--even">
         <Narrative arcId={id} entries={entries} onAdded={(e) => setEntries((all) => [...all, e])} />
@@ -84,8 +105,19 @@ export default function ArcPage() {
 function Header({ arc, onSaved }: { arc: Arc; onSaved: (a: Arc) => void }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(arc)
+  const [options, setOptions] = useState<ArcRow[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Every arc is a candidate parent. A move that would put this arc inside
+  // itself is refused by the server, which is the only place that can see the
+  // whole chain.
+  useEffect(() => {
+    if (!editing) return
+    listArcs()
+      .then(({ arcs }) => setOptions(arcs))
+      .catch(() => setOptions([]))
+  }, [editing])
 
   function open() {
     setDraft(arc)
@@ -103,6 +135,7 @@ function Header({ arc, onSaved }: { arc: Arc; onSaved: (a: Arc) => void }) {
       const { arc: saved } = await updateArc(arc.id, {
         title: draft.title,
         status: draft.status,
+        parent_id: draft.parent_id ?? '',
         summary: draft.summary ?? '',
         started_at: draft.started_at ?? '',
         target_at: draft.target_at ?? '',
@@ -150,6 +183,24 @@ function Header({ arc, onSaved }: { arc: Arc; onSaved: (a: Arc) => void }) {
             onChange={(e) => setDraft({ ...draft, title: e.target.value })}
             required
           />
+        </label>
+
+        <label className="field">
+          <span className="field__label">Inside</span>
+          <select
+            className="field__input"
+            value={draft.parent_id ?? ''}
+            onChange={(e) => setDraft({ ...draft, parent_id: e.target.value })}
+          >
+            <option value="">nothing — top level</option>
+            {options
+              .filter((option) => option.id !== arc.id)
+              .map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.title}
+                </option>
+              ))}
+          </select>
         </label>
 
         <div className="field-row">
@@ -217,6 +268,88 @@ function Header({ arc, onSaved }: { arc: Arc; onSaved: (a: Arc) => void }) {
             Cancel
           </button>
         </div>
+      </form>
+    </section>
+  )
+}
+
+// ── sub-arcs ─────────────────────────────────────────────────────────────
+
+// SubArcs is where a promotion case gets its dimensions. Adding one is a
+// single field on purpose: naming the thing you are missing has to be cheaper
+// than filling it, or nobody names it.
+function SubArcs({
+  arcId,
+  items,
+  onAdded,
+}: {
+  arcId: string
+  items: ArcRow[]
+  onAdded: () => void
+}) {
+  const [title, setTitle] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function add(e: React.FormEvent) {
+    e.preventDefault()
+    setSaving(true)
+    setError(null)
+    try {
+      await createArc({ title, status: 'open', parent_id: arcId })
+      setTitle('')
+      onAdded()
+    } catch (err) {
+      setError(message(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section className="panel arc-head" aria-labelledby="subarcs-heading">
+      <h2 id="subarcs-heading" className="panel__title">
+        Inside this
+        {items.length > 0 && <span className="counter">{items.length}</span>}
+      </h2>
+
+      {items.length === 0 && (
+        <p className="panel__hint">
+          Break it into the parts it will be judged on, and each part can hold its own
+          evidence. An empty one is a gap you can still act on.
+        </p>
+      )}
+
+      <ul className="subarcs">
+        {items.map((child) => (
+          <li key={child.id} className={isEmpty(child) ? 'subarc subarc--empty' : 'subarc'}>
+            <Link className="arc-card__link" to={`/arcs/${child.id}`}>
+              <span className="arc-card__title">{child.title}</span>
+            </Link>
+            <span className="arc-card__stat">
+              {isEmpty(child)
+                ? 'nothing yet'
+                : `${child.event_count} ${child.event_count === 1 ? 'event' : 'events'}` +
+                  (child.child_count > 0 ? `, ${child.child_count} inside` : '')}
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      <form className="form subarcs__form" onSubmit={add}>
+        <label className="field">
+          <span className="field__label">Add something inside this</span>
+          <input
+            className="field__input"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Cross-team influence"
+          />
+        </label>
+        {error && <p className="alert">{error}</p>}
+        <button className="button button--quiet" type="submit" disabled={saving || !title.trim()}>
+          {saving ? 'Adding…' : 'Add'}
+        </button>
       </form>
     </section>
   )

@@ -89,6 +89,8 @@ func (a *API) handleGetArc(w http.ResponseWriter, r *http.Request) {
 	var arc store.Arc
 	var entries []store.ArcEntry
 	var events []store.ArcEventRow
+	var children []store.ArcRow
+	var ancestors []store.Arc
 	if ok := a.scope(w, r, func(st *store.Store) error {
 		var err error
 		if arc, err = st.ArcByID(r.Context(), id); err != nil {
@@ -97,12 +99,21 @@ func (a *API) handleGetArc(w http.ResponseWriter, r *http.Request) {
 		if entries, err = st.ListArcEntries(r.Context(), id); err != nil {
 			return err
 		}
-		events, err = st.ListArcEvents(r.Context(), id)
+		if events, err = st.ListArcEvents(r.Context(), id); err != nil {
+			return err
+		}
+		if children, err = st.Children(r.Context(), id); err != nil {
+			return err
+		}
+		ancestors, err = st.Ancestors(r.Context(), id)
 		return err
 	}); !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"arc": arc, "entries": entries, "events": events})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"arc": arc, "entries": entries, "events": events,
+		"children": children, "ancestors": ancestors,
+	})
 }
 
 func (a *API) handleUpdateArc(w http.ResponseWriter, r *http.Request) {

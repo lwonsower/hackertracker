@@ -44,10 +44,13 @@ type API struct {
 	runner        *syncer.Runner
 	secrets       secrets.Resolver
 	githubBaseURL string
+	// nil when no Google client is configured, which makes the calendar
+	// report itself unavailable rather than half-working.
+	calendar *CalendarConfig
 }
 
-func New(db *store.DB, p *ingest.Pipeline, run *syncer.Runner, resolver secrets.Resolver, githubBaseURL string) *API {
-	return &API{db: db, pipeline: p, runner: run, secrets: resolver, githubBaseURL: githubBaseURL}
+func New(db *store.DB, p *ingest.Pipeline, run *syncer.Runner, resolver secrets.Resolver, githubBaseURL string, calendar *CalendarConfig) *API {
+	return &API{db: db, pipeline: p, runner: run, secrets: resolver, githubBaseURL: githubBaseURL, calendar: calendar}
 }
 
 // Routes registers handlers. `protect` wraps everything that acts on behalf of
@@ -67,6 +70,9 @@ func (a *API) Routes(mux *http.ServeMux, protect func(http.Handler) http.Handler
 		"DELETE /api/credentials/{id}":        a.handleDeleteCredential,
 	}
 	for pattern, handler := range a.arcRoutes() {
+		guarded[pattern] = handler
+	}
+	for pattern, handler := range a.calendarRoutes() {
 		guarded[pattern] = handler
 	}
 	for pattern, handler := range guarded {

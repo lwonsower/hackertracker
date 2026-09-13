@@ -8,6 +8,7 @@ import {
   type SourceAccount,
   type SyncReport,
 } from '../api'
+import CalendarConnection from '../components/CalendarConnection'
 
 function relative(iso?: string): string {
   if (!iso) return 'never synced'
@@ -133,6 +134,8 @@ export default function Sources() {
     }
   }
 
+  const connectors = sources.filter((source) => source.source !== 'google_calendar')
+
   return (
     <>
       <h1 className="page__title">Sources</h1>
@@ -218,7 +221,7 @@ export default function Sources() {
         </label>
 
         <ul className="sources">
-          {sources.map((source) => {
+          {connectors.map((source) => {
             const report = reports[source.id]
             const failure = syncErrors[source.id] || source.last_error
             return (
@@ -254,6 +257,8 @@ export default function Sources() {
           })}
         </ul>
       </section>
+
+      <CalendarConnection />
     </>
   )
 }

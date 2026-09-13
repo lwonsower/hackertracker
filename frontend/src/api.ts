@@ -29,6 +29,22 @@ export class NotSignedIn extends Error {
   }
 }
 
+/**
+ * An error the API described. `reconnect` marks the case where a stored grant
+ * has stopped working — the fix is reauthorising that connection, which is a
+ * different thing from the session ending.
+ */
+export class ApiError extends Error {
+  status: number
+  reconnect: boolean
+
+  constructor(message: string, status: number, reconnect = false) {
+    super(message)
+    this.status = status
+    this.reconnect = reconnect
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -42,11 +58,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     // The API always answers errors as {"error": "..."}; fall back to the
     // status line if something else went wrong (a proxy, say).
-    const message = await res
-      .json()
-      .then((body: { error?: string }) => body.error)
-      .catch(() => null)
-    throw new Error(message ?? `${res.status} ${res.statusText}`)
+    const body = await res.json().catch(() => null as { error?: string; reconnect?: boolean } | null)
+    throw new ApiError(
+      body?.error ?? `${res.status} ${res.statusText}`,
+      res.status,
+      body?.reconnect === true,
+    )
   }
 
   // A 204 carries no body, and asking an empty one for JSON throws.
@@ -141,6 +158,8 @@ export function syncSource(id: string, since?: string): Promise<SyncReport> {
 
 export type Arc = {
   id: string
+  /** The arc this one supports. Absent for a top-level arc. */
+  parent_id?: string
   title: string
   status: 'open' | 'done' | 'dropped'
   summary?: string
@@ -153,7 +172,13 @@ export type Arc = {
 export type ArcRow = Arc & {
   event_count: number
   entry_count: number
+  child_count: number
   last_event_at?: string
+}
+
+/** Supports nothing yet — the gap worth acting on. */
+export function isEmpty(arc: ArcRow): boolean {
+  return arc.event_count === 0 && arc.child_count === 0
 }
 
 export type ArcEntry = {
@@ -169,6 +194,8 @@ export type ArcEntry = {
 export type ArcEvent = EventRow & { other_arcs?: string[] }
 
 export type ArcInput = {
+  /** "" detaches the arc to the top level. */
+  parent_id?: string
   title: string
   status: string
   summary?: string
@@ -187,7 +214,14 @@ export function createArc(input: ArcInput): Promise<{ arc: Arc }> {
   return request('/api/arcs', { method: 'POST', body: JSON.stringify(input) })
 }
 
-export function getArc(id: string): Promise<{ arc: Arc; entries: ArcEntry[]; events: ArcEvent[] }> {
+export function getArc(id: string): Promise<{
+  arc: Arc
+  entries: ArcEntry[]
+  events: ArcEvent[]
+  children: ArcRow[]
+  /** Nearest parent first, up to the root. */
+  ancestors: Arc[]
+}> {
   return request(`/api/arcs/${id}`)
 }
 
@@ -229,6 +263,77 @@ export function attachEvents(
 /** Unfiles an event. The event itself stays in the capture layer. */
 export function detachEvent(id: string, eventId: string): Promise<void> {
   return request(`/api/arcs/${id}/events/${eventId}`, { method: 'DELETE' }) as Promise<void>
+}
+
+// ── calendar review ──────────────────────────────────────────────────────
+
+export type CalendarStatus = {
+  available: boolean
+  connected: boolean
+  /** Known but no longer readable: the grant was removed, the meetings remain. */
+  disconnected?: boolean
+  account?: string
+  last_reviewed_at?: string
+}
+
+/**
+ * A meeting the calendar offered. Nothing here is stored until it is picked —
+ * the server holds no copy of an unpicked meeting.
+ */
+export type Proposal = {
+  id: string
+  title: string
+  url?: string
+  start: string
+  end?: string
+  all_day?: boolean
+  recurring?: boolean
+  organizer?: string
+  self_organizer?: boolean
+  attendees?: string[]
+  response?: string
+  /** Which default filter hides this: declined, no response, solo, all day, recurring. */
+  excluded?: string
+  already_added?: boolean
+}
+
+export type Proposals = {
+  from: string
+  to: string
+  suggested: number
+  hidden: number
+  proposals: Proposal[]
+}
+
+export function calendarStatus(): Promise<CalendarStatus> {
+  return request('/api/calendar')
+}
+
+export function calendarProposals(opts: { from?: string; to?: string } = {}): Promise<Proposals> {
+  const params = new URLSearchParams()
+  if (opts.from) params.set('from', opts.from)
+  if (opts.to) params.set('to', opts.to)
+  const query = params.toString()
+  return request(`/api/calendar/proposals${query ? `?${query}` : ''}`)
+}
+
+/**
+ * Records the picked meetings and moves the review watermark. Only ids and
+ * notes are sent: the server re-reads the calendar for the facts, so a
+ * tampered payload cannot invent a meeting.
+ */
+export function promoteProposals(
+  picks: { id: string; note: string }[],
+  reviewedThrough: string,
+): Promise<{ added: number; updated: number; reviewed_through: string }> {
+  return request('/api/calendar/proposals', {
+    method: 'POST',
+    body: JSON.stringify({ picks, reviewed_through: reviewedThrough }),
+  })
+}
+
+export function disconnectCalendar(): Promise<void> {
+  return request('/api/calendar', { method: 'DELETE' }) as Promise<void>
 }
 
 export type Me = {
