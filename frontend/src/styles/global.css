@@ -803,3 +803,319 @@ h3 {
   font-size: 0.75rem;
   color: var(--color-text-faint);
 }
+
+/* Capture button and modal */
+
+.sidebar__capture {
+  font-size: var(--text-sm);
+}
+
+@media (min-width: 48rem) {
+  .sidebar__capture {
+    width: 100%;
+    margin-top: var(--space-6);
+    text-align: center;
+  }
+}
+
+/* Padding sits on the panel, not the dialog, so every click inside the box
+   lands on a child — which is what makes target === dialog mean "backdrop". */
+.modal {
+  width: min(34rem, calc(100vw - var(--space-8)));
+  /* The `* { margin: 0 }` reset above kills the UA rule that centres a modal
+     dialog, pinning it to the top-left. */
+  margin: auto;
+  padding: 0;
+  color: var(--color-text);
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.modal::backdrop {
+  background-color: rgb(0 0 0 / 0.6);
+}
+
+.modal__panel {
+  max-height: calc(100vh - var(--space-12));
+  padding: var(--space-6);
+  overflow-y: auto;
+}
+
+.modal__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.modal__close {
+  padding: 0 var(--space-2);
+  font: inherit;
+  font-size: var(--text-lg);
+  line-height: 1;
+  color: var(--color-text-faint);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.modal__close:hover {
+  color: var(--color-text);
+}
+
+.modal__actions {
+  display: flex;
+  gap: var(--space-3);
+}
+
+/* Calendar review */
+
+.review {
+  margin-bottom: var(--space-6);
+  padding: var(--space-4) var(--space-6);
+  background-color: var(--color-surface);
+  /* An accent edge rather than a filled panel: this is a prompt, not a
+     section, and it should not compete with the timeline behind it. */
+  border: 1px solid var(--color-border);
+  border-left: 2px solid var(--color-accent);
+  border-radius: var(--radius);
+}
+
+.review__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.review__lead {
+  font-size: var(--text-sm);
+}
+
+.review__fine {
+  margin-top: var(--space-2);
+  font-size: 0.75rem;
+  color: var(--color-text-faint);
+}
+
+.review--offer .button {
+  margin-top: var(--space-4);
+  display: inline-block;
+  text-decoration: none;
+}
+
+.review__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+/* The fade is a gradient painted over the list rather than a mask applied to
+   it, so nothing about how the rows themselves render can be affected. */
+.proposals-scroll {
+  position: relative;
+}
+
+.proposals-scroll::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 2rem;
+  background: linear-gradient(transparent, var(--color-surface));
+  pointer-events: none;
+}
+
+.proposals {
+  list-style: none;
+  padding: 0;
+  margin-top: var(--space-4);
+  display: grid;
+  gap: var(--space-1);
+  /* Capped so the Record button stays reachable on a busy week. */
+  max-height: 26rem;
+  overflow-y: auto;
+}
+
+/* A grid, so the note field below stretches to the row instead of falling back
+   to an input's intrinsic width and truncating what you type. */
+.proposal {
+  display: grid;
+  border-radius: var(--radius);
+}
+
+.proposal--picked {
+  background-color: var(--color-surface-raised);
+}
+
+.proposal__label {
+  display: flex;
+  align-items: start;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  cursor: pointer;
+}
+
+.proposal__label:hover {
+  background-color: var(--color-surface-raised);
+  border-radius: var(--radius);
+}
+
+/* Keeps the box its own size and aligned to the first line of a two-line row. */
+.proposal__label input[type='checkbox'],
+.candidate__label input[type='checkbox'] {
+  flex: none;
+  margin-top: 0.15rem;
+}
+
+.proposal__body {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.proposal__title {
+  font-size: var(--text-sm);
+}
+
+.proposal__meta {
+  font-size: 0.75rem;
+  color: var(--color-text-faint);
+}
+
+/* Names the filter that would have hidden this, so "show filtered out"
+   explains itself instead of just producing more rows. */
+.proposal__filter {
+  color: var(--color-accent-dim);
+}
+
+.proposal__note {
+  margin: 0 var(--space-2) var(--space-2) calc(var(--space-3) + 1rem);
+  font-size: var(--text-sm);
+}
+
+/* Calendar connection */
+
+.sources__connect {
+  display: inline-block;
+  margin-top: var(--space-4);
+  text-decoration: none;
+}
+
+.sources__calendar-meta {
+  margin-top: var(--space-2);
+}
+
+.sources__confirm {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+/* A reconnect link sits inside an alert, so it has to read as a link there. */
+.alert a {
+  color: var(--color-text);
+  text-decoration-color: var(--color-accent);
+  text-underline-offset: 2px;
+}
+
+.review__error {
+  margin-top: var(--space-3);
+}
+
+.review__range {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.link-button--on {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.sources__calendar-actions {
+  margin: var(--space-4) 0;
+}
+
+.sources__calendar-actions .button {
+  text-decoration: none;
+}
+
+/* Nested arcs */
+
+.arcs-column {
+  display: grid;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+/* The gap panel is the one screen that asks for something, so it carries the
+   accent edge the review banner uses rather than reading as another list. */
+.panel--gap {
+  border-left: 2px solid var(--color-accent);
+}
+
+.gaps {
+  list-style: none;
+  padding: 0;
+  margin-top: var(--space-4);
+  display: grid;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+/* Dashed rather than coloured: an arc with nothing in it is unfinished, not
+   failed, and red on a promotion case is the vocabulary to avoid. */
+.arc-card--empty {
+  background-color: transparent;
+  border: 1px dashed var(--color-border);
+}
+
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.crumbs .crumb {
+  margin-bottom: 0;
+}
+
+.crumbs__sep {
+  margin-right: var(--space-2);
+  color: var(--color-text-faint);
+}
+
+.subarcs {
+  list-style: none;
+  padding: 0;
+  margin-top: var(--space-4);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.subarc {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-surface-raised);
+  border-radius: var(--radius);
+}
+
+.subarc--empty {
+  background-color: transparent;
+  border: 1px dashed var(--color-border);
+}
+
+.subarcs__form {
+  margin-top: var(--space-4);
+}

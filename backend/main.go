@@ -25,6 +25,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lwonsower/hackertracker/backend/internal/auth"
+	"github.com/lwonsower/hackertracker/backend/internal/connectors/gcal"
 	"github.com/lwonsower/hackertracker/backend/internal/connectors/github"
 	"github.com/lwonsower/hackertracker/backend/internal/core"
 	"github.com/lwonsower/hackertracker/backend/internal/db"
@@ -38,6 +39,9 @@ import (
 
 //go:embed web
 var webFS embed.FS
+
+// calendarCallbackPath is where the calendar handshake must come back to.
+const calendarCallbackPath = "/api/calendar/callback"
 
 const (
 	defaultPort     = "8080"
@@ -161,7 +165,35 @@ func run() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealthz(pool))
 	authService.Routes(mux)
-	httpapi.New(database, pipeline, runner, resolver, githubBaseURL).Routes(mux, authService.Require)
+	// Calendar reuses the sign-in client but asks for its own consent, so it
+	// is nil until a Google client and a calendar redirect URL both exist.
+	var calendar *httpapi.CalendarConfig
+	if redirect := os.Getenv("CALENDAR_REDIRECT_URL"); redirect != "" && os.Getenv("GOOGLE_CLIENT_ID") != "" {
+		calendar = &httpapi.CalendarConfig{
+			Config: gcal.Config{
+				ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
+				ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+				APIBase:      os.Getenv("GOOGLE_CALENDAR_API_BASE_URL"),
+				OAuthBase:    os.Getenv("GOOGLE_OAUTH_BASE_URL"),
+			},
+			RedirectURL: redirect,
+		}
+		pipeline.Register("google_calendar", gcal.Normalizer{})
+
+		// A redirect URL pointing anywhere else fails in the most confusing
+		// way available: Google's consent screen succeeds, the browser lands
+		// on some other handler, and no credential is ever stored — so the
+		// feature reports itself as simply not connected.
+		if !strings.HasSuffix(redirect, calendarCallbackPath) {
+			log.Printf("CALENDAR_REDIRECT_URL is %q, which does not end in %s. "+
+				"Consent will succeed and the connection will not be stored.",
+				redirect, calendarCallbackPath)
+		}
+	} else {
+		log.Print("Google Calendar review is off (set GOOGLE_CLIENT_ID and CALENDAR_REDIRECT_URL to enable it)")
+	}
+
+	httpapi.New(database, pipeline, runner, resolver, githubBaseURL, calendar).Routes(mux, authService.Require)
 	mux.Handle("GET /", spaHandler(static))
 
 	srv := &http.Server{

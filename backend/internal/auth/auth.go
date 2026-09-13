@@ -194,7 +194,7 @@ func (s *Service) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Consuming deletes the row, so a replayed callback finds nothing.
-	state, err := s.db.ConsumeAuthState(r.Context(), query.Get("state"))
+	state, err := s.db.ConsumeAuthState(r.Context(), query.Get("state"), "signin")
 	if err != nil {
 		s.failSignIn(w, r, "this sign-in link has expired or was already used")
 		return

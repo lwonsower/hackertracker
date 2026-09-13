@@ -5,7 +5,6 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import AppShell from './layout/AppShell'
 import ArcPage from './routes/Arc'
 import Arcs from './routes/Arcs'
-import Goals from './routes/Goals'
 import SignIn from './routes/SignIn'
 import Sources from './routes/Sources'
 import Timeline from './routes/Timeline'
@@ -34,7 +33,6 @@ createRoot(rootElement).render(
           <Route path="/arcs" element={<Arcs />} />
           <Route path="/arcs/:id" element={<ArcPage />} />
           <Route path="/sources" element={<Sources />} />
-          <Route path="/goals" element={<Goals />} />
         </Route>
       </Routes>
     </BrowserRouter>

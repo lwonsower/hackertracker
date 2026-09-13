@@ -1,13 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 
-import { createArc, listArcs, type ArcRow } from '../api'
-
-const STATUS_LABEL: Record<string, string> = {
-  open: 'open',
-  done: 'done',
-  dropped: 'dropped',
-}
+import { createArc, isEmpty, listArcs, type ArcRow } from '../api'
 
 function relative(iso?: string): string {
   if (!iso) return 'nothing filed yet'
@@ -19,12 +13,37 @@ function relative(iso?: string): string {
   return `latest evidence ${Math.round(days / 365)} years ago`
 }
 
+/** Depth-first order, so a parent is immediately followed by what it holds. */
+function nest(arcs: ArcRow[]): { arc: ArcRow; depth: number }[] {
+  const byParent = new Map<string, ArcRow[]>()
+  const known = new Set(arcs.map((a) => a.id))
+  for (const arc of arcs) {
+    // An arc whose parent is not in the list is shown at the top rather than
+    // hidden: never drop a row because its parent is missing.
+    const key = arc.parent_id && known.has(arc.parent_id) ? arc.parent_id : ''
+    const bucket = byParent.get(key)
+    if (bucket) bucket.push(arc)
+    else byParent.set(key, [arc])
+  }
+
+  const out: { arc: ArcRow; depth: number }[] = []
+  const walk = (key: string, depth: number) => {
+    for (const arc of byParent.get(key) ?? []) {
+      out.push({ arc, depth })
+      walk(arc.id, depth + 1)
+    }
+  }
+  walk('', 0)
+  return out
+}
+
 export default function Arcs() {
   const [arcs, setArcs] = useState<ArcRow[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
   const [title, setTitle] = useState('')
+  const [parentID, setParentID] = useState('')
   const [startedAt, setStartedAt] = useState('')
   const [targetAt, setTargetAt] = useState('')
   const [summary, setSummary] = useState('')
@@ -47,6 +66,9 @@ export default function Arcs() {
     void refresh()
   }, [refresh])
 
+  const ordered = useMemo(() => nest(arcs), [arcs])
+  const gaps = useMemo(() => arcs.filter(isEmpty), [arcs])
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
@@ -55,6 +77,7 @@ export default function Arcs() {
       await createArc({
         title,
         status: 'open',
+        parent_id: parentID || undefined,
         summary: summary.trim() || undefined,
         started_at: startedAt || undefined,
         target_at: targetAt || undefined,
@@ -81,8 +104,9 @@ export default function Arcs() {
             New arc
           </h2>
           <p className="panel__hint">
-            A line of work, not a ticket. A migration, a mentoring relationship, the
-            quarter you spent making on-call survivable.
+            A line of work, or something you are aiming at. An arc can sit inside another,
+            so <em>Promotion to Staff</em> holds <em>Cross-team influence</em>, which holds
+            the work itself.
           </p>
 
           <form className="form" onSubmit={handleSubmit}>
@@ -95,6 +119,25 @@ export default function Arcs() {
                 placeholder="Auth service migration"
                 required
               />
+            </label>
+
+            <label className="field">
+              <span className="field__label">
+                Inside <span className="field__optional">optional</span>
+              </span>
+              <select
+                className="field__input"
+                value={parentID}
+                onChange={(e) => setParentID(e.target.value)}
+              >
+                <option value="">nothing — top level</option>
+                {ordered.map(({ arc, depth }) => (
+                  <option key={arc.id} value={arc.id}>
+                    {'— '.repeat(depth)}
+                    {arc.title}
+                  </option>
+                ))}
+              </select>
             </label>
 
             <div className="field-row">
@@ -144,45 +187,76 @@ export default function Arcs() {
           </form>
         </section>
 
-        <section className="panel" aria-labelledby="arcs-heading">
-          <h2 id="arcs-heading" className="panel__title">
-            Arcs
-            {arcs.length > 0 && <span className="counter">{arcs.length}</span>}
-          </h2>
-
-          {loading && <p className="panel__hint">Loading…</p>}
-          {loadError && <p className="alert">{loadError}</p>}
-
-          {!loading && !loadError && arcs.length === 0 && (
-            <p className="panel__hint">
-              No arcs yet. Events on their own do not survive a review — the arc is the
-              thing you can actually claim.
-            </p>
+        <div className="arcs-column">
+          {gaps.length > 0 && (
+            <section className="panel panel--gap" aria-labelledby="gaps-heading">
+              <h2 id="gaps-heading" className="panel__title">
+                Nothing supports these yet
+                <span className="counter">{gaps.length}</span>
+              </h2>
+              <p className="panel__hint">
+                Named, and holding no work. Seen in March this is a to-do list; seen in
+                December it is what you could not claim.
+              </p>
+              <ul className="gaps">
+                {gaps.map((arc) => (
+                  <li key={arc.id}>
+                    <Link className="arc-card__link" to={`/arcs/${arc.id}`}>
+                      {arc.title}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </section>
           )}
 
-          <ul className="arcs">
-            {arcs.map((arc) => (
-              <li key={arc.id} className="arc-card">
-                <Link className="arc-card__link" to={`/arcs/${arc.id}`}>
-                  <span className="arc-card__title">{arc.title}</span>
-                </Link>
-                <div className="arc-card__meta">
-                  <span className={`badge badge--${arc.status}`}>
-                    {STATUS_LABEL[arc.status] ?? arc.status}
-                  </span>
-                  <span className="arc-card__stat">
-                    {arc.event_count} {arc.event_count === 1 ? 'event' : 'events'}
-                  </span>
-                  <span className="arc-card__stat">
-                    {arc.entry_count} {arc.entry_count === 1 ? 'entry' : 'entries'}
-                  </span>
-                  <span className="arc-card__stat">{relative(arc.last_event_at)}</span>
-                </div>
-                {arc.summary && <p className="arc-card__summary">{arc.summary}</p>}
-              </li>
-            ))}
-          </ul>
-        </section>
+          <section className="panel" aria-labelledby="arcs-heading">
+            <h2 id="arcs-heading" className="panel__title">
+              Arcs
+              {arcs.length > 0 && <span className="counter">{arcs.length}</span>}
+            </h2>
+
+            {loading && <p className="panel__hint">Loading…</p>}
+            {loadError && <p className="alert">{loadError}</p>}
+
+            {!loading && !loadError && arcs.length === 0 && (
+              <p className="panel__hint">
+                No arcs yet. Events on their own do not survive a review — the arc is the
+                thing you can actually claim.
+              </p>
+            )}
+
+            <ul className="arcs">
+              {ordered.map(({ arc, depth }) => (
+                <li
+                  key={arc.id}
+                  className={isEmpty(arc) ? 'arc-card arc-card--empty' : 'arc-card'}
+                  style={{ marginLeft: `calc(${depth} * var(--space-6))` }}
+                >
+                  <Link className="arc-card__link" to={`/arcs/${arc.id}`}>
+                    <span className="arc-card__title">{arc.title}</span>
+                  </Link>
+                  <div className="arc-card__meta">
+                    <span className={`badge badge--${arc.status}`}>{arc.status}</span>
+                    {arc.child_count > 0 && (
+                      <span className="arc-card__stat">
+                        {arc.child_count} {arc.child_count === 1 ? 'sub-arc' : 'sub-arcs'}
+                      </span>
+                    )}
+                    <span className="arc-card__stat">
+                      {arc.event_count} {arc.event_count === 1 ? 'event' : 'events'}
+                    </span>
+                    <span className="arc-card__stat">
+                      {arc.entry_count} {arc.entry_count === 1 ? 'entry' : 'entries'}
+                    </span>
+                    <span className="arc-card__stat">{relative(arc.last_event_at)}</span>
+                  </div>
+                  {arc.summary && <p className="arc-card__summary">{arc.summary}</p>}
+                </li>
+              ))}
+            </ul>
+          </section>
+        </div>
       </div>
     </>
   )
