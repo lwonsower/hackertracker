@@ -83,6 +83,19 @@ export function createEvent(entry: ManualEntry): Promise<unknown> {
   return request('/api/events', { method: 'POST', body: JSON.stringify(entry) })
 }
 
+/**
+ * Hides an event. The row stays, so the next sync will not add it back —
+ * `filed_in` says how many arcs it just disappeared from.
+ */
+export function deleteEvent(id: string): Promise<{ deleted: boolean; filed_in: number }> {
+  return request(`/api/events/${id}`, { method: 'DELETE' })
+}
+
+/** Lifts the tombstone. Arc membership was never removed, so it comes back filed. */
+export function restoreEvent(id: string): Promise<void> {
+  return request(`/api/events/${id}/restore`, { method: 'POST' }) as Promise<void>
+}
+
 export type SourceAccount = {
   id: string
   source: string
@@ -158,8 +171,6 @@ export function syncSource(id: string, since?: string): Promise<SyncReport> {
 
 export type Arc = {
   id: string
-  /** The arc this one supports. Absent for a top-level arc. */
-  parent_id?: string
   title: string
   status: 'open' | 'done' | 'dropped'
   summary?: string
@@ -172,13 +183,19 @@ export type Arc = {
 export type ArcRow = Arc & {
   event_count: number
   entry_count: number
-  child_count: number
+  /** How many arcs are filed into this one. */
+  arc_count: number
+  /** How many arcs this one is filed into — it can be several. */
+  supports_count: number
   last_event_at?: string
 }
 
-/** Supports nothing yet — the gap worth acting on. */
+/** One evidence edge: `evidence_id` is filed into `arc_id`. */
+export type ArcLink = { arc_id: string; evidence_id: string }
+
+/** Holds nothing yet — the gap worth acting on. */
 export function isEmpty(arc: ArcRow): boolean {
-  return arc.event_count === 0 && arc.child_count === 0
+  return arc.event_count === 0 && arc.arc_count === 0
 }
 
 export type ArcEntry = {
@@ -194,8 +211,6 @@ export type ArcEntry = {
 export type ArcEvent = EventRow & { other_arcs?: string[] }
 
 export type ArcInput = {
-  /** "" detaches the arc to the top level. */
-  parent_id?: string
   title: string
   status: string
   summary?: string
@@ -206,7 +221,7 @@ export type ArcInput = {
 
 export const ENTRY_KINDS = ['hypothesis', 'update', 'risk', 'outcome', 'retro'] as const
 
-export function listArcs(): Promise<{ arcs: ArcRow[] }> {
+export function listArcs(): Promise<{ arcs: ArcRow[]; links: ArcLink[] }> {
   return request('/api/arcs')
 }
 
@@ -218,11 +233,39 @@ export function getArc(id: string): Promise<{
   arc: Arc
   entries: ArcEntry[]
   events: ArcEvent[]
-  children: ArcRow[]
-  /** Nearest parent first, up to the root. */
-  ancestors: Arc[]
+  /** Arcs filed into this one. */
+  evidence_arcs: ArcRow[]
+  /** Arcs this one is filed into. */
+  supports: Arc[]
 }> {
   return request(`/api/arcs/${id}`)
+}
+
+/** Arcs that could be filed into this one, already excluding anything that would loop. */
+export function arcCandidateArcs(id: string, q?: string): Promise<{ arcs: ArcRow[] }> {
+  const params = new URLSearchParams()
+  if (q) params.set('q', q)
+  const query = params.toString()
+  return request(`/api/arcs/${id}/arc-candidates${query ? `?${query}` : ''}`)
+}
+
+/**
+ * Files arcs into this one as evidence. A pick that would close a loop is
+ * reported in `refused` rather than failing the whole batch.
+ */
+export function attachArcs(
+  id: string,
+  arcIds: string[],
+): Promise<{ attached: number; refused: string[]; evidence_arcs: ArcRow[] }> {
+  return request(`/api/arcs/${id}/arcs`, {
+    method: 'POST',
+    body: JSON.stringify({ arc_ids: arcIds }),
+  })
+}
+
+/** Unfiles an arc. The arc itself is untouched. */
+export function detachArc(id: string, arcId: string): Promise<void> {
+  return request(`/api/arcs/${id}/arcs/${arcId}`, { method: 'DELETE' }) as Promise<void>
 }
 
 /** A whole-record replace, so clearing a date is expressible. */

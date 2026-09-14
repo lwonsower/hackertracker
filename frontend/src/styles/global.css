@@ -36,127 +36,6 @@ h3 {
   isolation: isolate;
 }
 
-/* App shell */
-
-.app {
-  min-height: 100vh;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-}
-
-@media (min-width: 48rem) {
-  .app {
-    grid-template-columns: 13rem minmax(0, 1fr);
-  }
-}
-
-.sidebar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-4) var(--space-6);
-  border-bottom: 1px solid var(--color-border);
-}
-
-@media (min-width: 48rem) {
-  .sidebar {
-    position: sticky;
-    top: 0;
-    align-self: start;
-    display: block;
-    height: 100vh;
-    padding: var(--space-8) var(--space-6);
-    border-bottom: 0;
-    border-right: 1px solid var(--color-border);
-  }
-}
-
-.wordmark {
-  display: block;
-  font-size: var(--text-lg);
-  font-weight: 400;
-  letter-spacing: var(--tracking-wide);
-  color: var(--color-text);
-  text-decoration: none;
-}
-
-.nav {
-  display: flex;
-  gap: var(--space-1);
-}
-
-@media (min-width: 48rem) {
-  .nav {
-    display: grid;
-    margin-top: var(--space-8);
-  }
-}
-
-.nav__link {
-  padding: var(--space-2) var(--space-3);
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
-  text-decoration: none;
-  border-radius: var(--radius);
-}
-
-.nav__link:hover {
-  color: var(--color-text);
-  background-color: var(--color-surface);
-}
-
-.nav__link--active {
-  color: var(--color-text);
-  background-color: var(--color-surface-raised);
-}
-
-.content {
-  min-width: 0;
-  padding: var(--space-8) var(--space-6) var(--space-12);
-}
-
-.page__title {
-  font-size: var(--text-xl);
-  font-weight: 400;
-  margin-bottom: var(--space-6);
-}
-
-.layout {
-  display: grid;
-  gap: var(--space-6);
-  align-items: start;
-  grid-template-columns: minmax(0, 1fr);
-}
-
-@media (min-width: 64rem) {
-  .layout {
-    grid-template-columns: 22rem minmax(0, 1fr);
-  }
-
-  .layout > .panel:first-child {
-    position: sticky;
-    top: var(--space-8);
-  }
-}
-
-/* Panels */
-
-.panel {
-  background-color: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  padding: var(--space-6);
-}
-
-.panel__title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  font-size: var(--text-lg);
-  font-weight: 500;
-}
-
 .panel__hint {
   margin-top: var(--space-3);
   font-size: var(--text-sm);
@@ -166,41 +45,6 @@ h3 {
 .panel__hint code {
   font-family: var(--font-mono);
   color: var(--color-text);
-}
-
-.counter {
-  font-size: var(--text-sm);
-  font-variant-numeric: tabular-nums;
-  color: var(--color-text-faint);
-}
-
-/* Forms */
-
-.form {
-  display: grid;
-  gap: var(--space-4);
-  margin-top: var(--space-6);
-}
-
-.field-row {
-  display: grid;
-  gap: var(--space-4);
-  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-}
-
-.field {
-  display: grid;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.field__label {
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
-}
-
-.field__optional {
-  color: var(--color-text-faint);
 }
 
 .field__input {
@@ -213,49 +57,12 @@ h3 {
   border-radius: var(--radius);
 }
 
-.field__input--area {
-  resize: vertical;
-  font-size: var(--text-sm);
-}
-
 .field__input:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 1px;
 }
 
-.field__prefixed {
-  display: flex;
-  align-items: stretch;
-  background-color: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-}
-
-.field__prefixed:focus-within {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 1px;
-}
-
-.field__prefix {
-  display: grid;
-  place-items: center;
-  padding-inline: var(--space-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  color: var(--color-text-faint);
-  border-right: 1px solid var(--color-border);
-}
-
 /* The input already sits inside the bordered wrapper. */
-.field__prefixed .field__input {
-  border: 0;
-  border-radius: 0;
-  background-color: transparent;
-}
-
-.field__prefixed .field__input:focus-visible {
-  outline: none;
-}
 
 .field__help {
   font-size: 0.75rem;
@@ -308,125 +115,16 @@ h3 {
   border-radius: var(--radius);
 }
 
-/* Timeline */
-
-.timeline,
-.timeline__events {
-  list-style: none;
-  padding: 0;
-}
-
-.timeline {
-  margin-top: var(--space-6);
-  display: grid;
-  gap: var(--space-6);
-}
-
-.timeline__date {
-  font-size: var(--text-sm);
-  font-weight: 500;
-  color: var(--color-text-muted);
-  padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.timeline__events {
-  display: grid;
-  gap: var(--space-3);
-  margin-top: var(--space-3);
-}
-
-.event {
-  padding: var(--space-3);
-  background-color: var(--color-surface-raised);
-  border-radius: var(--radius);
-}
-
-.event__meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-sm);
-}
-
-.badge {
-  padding: 0 var(--space-2);
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  color: var(--color-accent);
-  border: 1px solid var(--color-accent-dim);
-  border-radius: var(--radius);
-}
-
-.event__time,
-.event__source {
-  color: var(--color-text-faint);
-  font-size: 0.75rem;
-}
-
-.event__title {
-  margin-top: var(--space-2);
-}
-
-.event__link {
-  color: var(--color-text);
-  text-decoration-color: var(--color-accent-dim);
-  text-underline-offset: 2px;
-}
-
-.event__note {
-  margin-top: var(--space-2);
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
-  white-space: pre-wrap;
-}
-
-/* Sources */
-
-.sources {
-  list-style: none;
-  padding: 0;
-  margin-top: var(--space-6);
-  display: grid;
-  gap: var(--space-3);
-}
-
-.sources__since {
-  margin-top: var(--space-6);
-}
-
-.source {
-  display: grid;
-  gap: var(--space-2);
-  justify-items: start;
-  padding: var(--space-3);
-  background-color: var(--color-surface-raised);
-  border-radius: var(--radius);
-}
-
-.source__head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.source__label {
-  font-size: var(--text-sm);
-}
-
-.source__meta {
-  font-size: 0.75rem;
-  color: var(--color-text-faint);
-}
-
-.source__report {
-  font-size: 0.75rem;
-  font-variant-numeric: tabular-nums;
-  color: var(--color-text-muted);
-}
-
 /* Sign-in */
+
+.wordmark {
+  display: block;
+  font-size: var(--text-lg);
+  font-weight: 400;
+  letter-spacing: var(--tracking-wide);
+  color: var(--color-text);
+  text-decoration: none;
+}
 
 .signin {
   min-height: 100vh;
@@ -513,215 +211,6 @@ h3 {
   padding-right: 2px;
 }
 
-/* Sidebar footer */
-
-.sidebar__user {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-left: auto;
-  min-width: 0;
-}
-
-@media (min-width: 48rem) {
-  .sidebar__user {
-    display: grid;
-    justify-items: start;
-    gap: var(--space-1);
-    margin: var(--space-8) 0 0;
-  }
-}
-
-.sidebar__email {
-  font-size: 0.75rem;
-  color: var(--color-text-faint);
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar__signout {
-  font: inherit;
-  font-size: var(--text-sm);
-  background: none;
-  border: 0;
-  cursor: pointer;
-  text-align: left;
-}
-
-.field__toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  cursor: pointer;
-}
-
-/* Arcs */
-
-/* Narrative and evidence carry equal weight, so neither gets the narrow rail
-   the sidebar-shaped .layout gives its first child. */
-@media (min-width: 64rem) {
-  .layout--even {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  }
-
-  .layout--even > .panel:first-child {
-    position: static;
-  }
-}
-
-.crumb {
-  display: inline-block;
-  margin-bottom: var(--space-4);
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
-  text-decoration: none;
-}
-
-.crumb:hover {
-  color: var(--color-text);
-}
-
-.arcs {
-  list-style: none;
-  padding: 0;
-  margin-top: var(--space-6);
-  display: grid;
-  gap: var(--space-3);
-}
-
-.arc-card {
-  padding: var(--space-3);
-  background-color: var(--color-surface-raised);
-  border-radius: var(--radius);
-}
-
-.arc-card__link {
-  color: var(--color-text);
-  text-decoration: none;
-}
-
-.arc-card__title {
-  font-size: var(--text-base);
-}
-
-.arc-card__link:hover .arc-card__title {
-  text-decoration: underline;
-  text-decoration-color: var(--color-accent-dim);
-  text-underline-offset: 2px;
-}
-
-.arc-card__meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-}
-
-.arc-card__stat {
-  font-size: 0.75rem;
-  color: var(--color-text-faint);
-}
-
-.arc-card__summary {
-  margin-top: var(--space-2);
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
-  white-space: pre-wrap;
-}
-
-/* A dropped arc is not a failure, so it is dimmed rather than coloured red. */
-.badge--done {
-  color: var(--color-text-muted);
-  border-color: var(--color-border);
-}
-
-.badge--dropped {
-  color: var(--color-text-faint);
-  border-color: var(--color-border);
-}
-
-.arc-head {
-  margin-bottom: var(--space-6);
-}
-
-.arc-head__top {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-
-.arc-head__title {
-  margin-bottom: 0;
-}
-
-.arc-head__summary {
-  margin-top: var(--space-3);
-  color: var(--color-text-muted);
-  white-space: pre-wrap;
-}
-
-.arc-head__form {
-  margin-top: 0;
-}
-
-.arc-head__actions {
-  display: flex;
-  gap: var(--space-3);
-}
-
-/* Narrative */
-
-.entries {
-  list-style: none;
-  padding: 0;
-  margin-top: var(--space-6);
-  display: grid;
-  gap: var(--space-3);
-}
-
-/* A rule down the left makes the sequence read as one running log rather than
-   as a stack of unrelated notes. */
-.entry {
-  padding-left: var(--space-4);
-  border-left: 2px solid var(--color-border);
-}
-
-.entry__meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.entry__date {
-  font-size: 0.75rem;
-  color: var(--color-text-faint);
-  font-variant-numeric: tabular-nums;
-}
-
-.entry__body {
-  margin-top: var(--space-1);
-  font-size: var(--text-sm);
-  white-space: pre-wrap;
-}
-
-/* Evidence */
-
-.panel__action {
-  margin-left: auto;
-}
-
-.evidence {
-  list-style: none;
-  padding: 0;
-  margin-top: var(--space-6);
-  display: grid;
-  gap: var(--space-3);
-}
-
 .link-button {
   padding: 0;
   font: inherit;
@@ -743,22 +232,6 @@ h3 {
   text-decoration: none;
 }
 
-.evidence .link-button {
-  margin-left: auto;
-}
-
-/* Add evidence */
-
-.finder {
-  display: grid;
-  gap: var(--space-4);
-  margin-top: var(--space-6);
-  padding: var(--space-4);
-  background-color: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-}
-
 .finder__bar {
   display: flex;
   align-items: center;
@@ -766,109 +239,8 @@ h3 {
   gap: var(--space-3);
 }
 
-.candidates {
-  list-style: none;
-  padding: 0;
-  display: grid;
-  gap: var(--space-1);
-  /* Capped so a wide search cannot push the file button off the screen. */
-  max-height: 22rem;
-  overflow-y: auto;
-}
-
-.candidate__label {
-  display: flex;
-  align-items: start;
-  gap: var(--space-3);
-  padding: var(--space-2);
-  border-radius: var(--radius);
-  cursor: pointer;
-}
-
-.candidate__label:hover {
-  background-color: var(--color-surface-raised);
-}
-
-.candidate__body {
-  display: grid;
-  gap: var(--space-1);
-  min-width: 0;
-}
-
-.candidate__title {
-  font-size: var(--text-sm);
-}
-
-.candidate__meta {
-  font-size: 0.75rem;
-  color: var(--color-text-faint);
-}
-
-/* Capture button and modal */
-
-.sidebar__capture {
-  font-size: var(--text-sm);
-}
-
-@media (min-width: 48rem) {
-  .sidebar__capture {
-    width: 100%;
-    margin-top: var(--space-6);
-    text-align: center;
-  }
-}
-
 /* Padding sits on the panel, not the dialog, so every click inside the box
    lands on a child — which is what makes target === dialog mean "backdrop". */
-.modal {
-  width: min(34rem, calc(100vw - var(--space-8)));
-  /* The `* { margin: 0 }` reset above kills the UA rule that centres a modal
-     dialog, pinning it to the top-left. */
-  margin: auto;
-  padding: 0;
-  color: var(--color-text);
-  background-color: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-}
-
-.modal::backdrop {
-  background-color: rgb(0 0 0 / 0.6);
-}
-
-.modal__panel {
-  max-height: calc(100vh - var(--space-12));
-  padding: var(--space-6);
-  overflow-y: auto;
-}
-
-.modal__head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-
-.modal__close {
-  padding: 0 var(--space-2);
-  font: inherit;
-  font-size: var(--text-lg);
-  line-height: 1;
-  color: var(--color-text-faint);
-  background: none;
-  border: 0;
-  cursor: pointer;
-}
-
-.modal__close:hover {
-  color: var(--color-text);
-}
-
-.modal__actions {
-  display: flex;
-  gap: var(--space-3);
-}
-
 /* Calendar review */
 
 .review {
@@ -965,8 +337,7 @@ h3 {
 }
 
 /* Keeps the box its own size and aligned to the first line of a two-line row. */
-.proposal__label input[type='checkbox'],
-.candidate__label input[type='checkbox'] {
+.proposal__label input[type='checkbox'] {
   flex: none;
   margin-top: 0.15rem;
 }
@@ -1005,16 +376,6 @@ h3 {
   text-decoration: none;
 }
 
-.sources__calendar-meta {
-  margin-top: var(--space-2);
-}
-
-.sources__confirm {
-  display: grid;
-  gap: var(--space-3);
-  margin-top: var(--space-4);
-}
-
 /* A reconnect link sits inside an alert, so it has to read as a link there. */
 .alert a {
   color: var(--color-text);
@@ -1035,87 +396,4 @@ h3 {
 .link-button--on {
   color: var(--color-accent);
   text-decoration: none;
-}
-
-.sources__calendar-actions {
-  margin: var(--space-4) 0;
-}
-
-.sources__calendar-actions .button {
-  text-decoration: none;
-}
-
-/* Nested arcs */
-
-.arcs-column {
-  display: grid;
-  gap: var(--space-6);
-  min-width: 0;
-}
-
-/* The gap panel is the one screen that asks for something, so it carries the
-   accent edge the review banner uses rather than reading as another list. */
-.panel--gap {
-  border-left: 2px solid var(--color-accent);
-}
-
-.gaps {
-  list-style: none;
-  padding: 0;
-  margin-top: var(--space-4);
-  display: grid;
-  gap: var(--space-2);
-  font-size: var(--text-sm);
-}
-
-/* Dashed rather than coloured: an arc with nothing in it is unfinished, not
-   failed, and red on a promotion case is the vocabulary to avoid. */
-.arc-card--empty {
-  background-color: transparent;
-  border: 1px dashed var(--color-border);
-}
-
-.crumbs {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2);
-  margin-bottom: var(--space-4);
-}
-
-.crumbs .crumb {
-  margin-bottom: 0;
-}
-
-.crumbs__sep {
-  margin-right: var(--space-2);
-  color: var(--color-text-faint);
-}
-
-.subarcs {
-  list-style: none;
-  padding: 0;
-  margin-top: var(--space-4);
-  display: grid;
-  gap: var(--space-2);
-}
-
-.subarc {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  background-color: var(--color-surface-raised);
-  border-radius: var(--radius);
-}
-
-.subarc--empty {
-  background-color: transparent;
-  border: 1px dashed var(--color-border);
-}
-
-.subarcs__form {
-  margin-top: var(--space-4);
 }

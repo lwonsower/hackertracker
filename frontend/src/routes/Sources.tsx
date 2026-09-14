@@ -1,3 +1,18 @@
+import {
+  Alert,
+  Badge,
+  Box,
+  Button,
+  Card,
+  Checkbox,
+  Field,
+  Heading,
+  HStack,
+  Input,
+  InputGroup,
+  Stack,
+  Text,
+} from '@chakra-ui/react'
 import { useCallback, useEffect, useState } from 'react'
 
 import {
@@ -9,6 +24,7 @@ import {
   type SyncReport,
 } from '../api'
 import CalendarConnection from '../components/CalendarConnection'
+import DateField from '../components/DateField'
 
 function relative(iso?: string): string {
   if (!iso) return 'never synced'
@@ -27,7 +43,8 @@ function relative(iso?: string): string {
  * through a request and back out in an error message — so the useful place to
  * stop it is here.
  */
-const CREDENTIAL_PREFIXES = /^(github_pat_|ghp_|gho_|ghu_|ghs_|ghr_|glpat-|xox|sk-|sk_|rk_|AKIA|ASIA)/
+const CREDENTIAL_PREFIXES =
+  /^(github_pat_|ghp_|gho_|ghu_|ghs_|ghr_|glpat-|xox|sk-|sk_|rk_|AKIA|ASIA)/
 const MAX_NAME_LENGTH = 64
 
 function looksLikeCredential(value: string): boolean {
@@ -127,7 +144,10 @@ export default function Sources() {
       setReports((prev) => ({ ...prev, [id]: report }))
       await refresh()
     } catch (err) {
-      setSyncErrors((prev) => ({ ...prev, [id]: err instanceof Error ? err.message : String(err) }))
+      setSyncErrors((prev) => ({
+        ...prev,
+        [id]: err instanceof Error ? err.message : String(err),
+      }))
       await refresh()
     } finally {
       setSyncing(null)
@@ -138,127 +158,184 @@ export default function Sources() {
 
   return (
     <>
-      <h1 className="page__title">Sources</h1>
-      <section className="panel">
-        <p className="panel__hint">
-          Paste a personal access token. It is encrypted before it is stored, and
-          never shown again.
-        </p>
+      <Heading as="h1" fontSize="xl" fontWeight="normal" mb="6">
+        Sources
+      </Heading>
 
-        <form className="form" onSubmit={handleConnect}>
-          <label className="field">
-            <span className="field__label">Label</span>
-            <input
-              className="field__input"
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              required
-            />
-          </label>
+      <Stack gap="6">
+        <Card.Root as="section">
+          <Card.Body>
+            <Text fontSize="sm" color="fg.muted">
+              Paste a personal access token. It is encrypted before it is stored, and never
+              shown again.
+            </Text>
 
-          {useEnvVar ? (
-            <label className="field">
-              <span className="field__label">Variable name</span>
-              <div className="field__prefixed">
-                <span className="field__prefix">env:</span>
-                <input
-                  className="field__input"
-                  value={envVar}
-                  onChange={(e) => setEnvVar(e.target.value)}
-                  placeholder="GITHUB_TOKEN"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </div>
-            </label>
-          ) : (
-            <label className="field">
-              <span className="field__label">Personal access token</span>
-              <input
-                className="field__input"
-                type="password"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder="github_pat_…"
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </label>
-          )}
+            <Stack as="form" onSubmit={handleConnect} gap="4" mt="6" maxW="lg">
+              <Field.Root required>
+                <Field.Label>Label</Field.Label>
+                <Input value={label} onChange={(e) => setLabel(e.target.value)} />
+              </Field.Root>
 
-          {selfHost && (
-            <label className="field__help field__toggle">
-              <input
-                type="checkbox"
-                checked={useEnvVar}
-                onChange={(e) => setUseEnvVar(e.target.checked)}
-              />
-              Use an environment variable instead (self-hosted only)
-            </label>
-          )}
-
-          {connectError && <p className="alert">{connectError}</p>}
-
-          <button className="button button--quiet" type="submit" disabled={connecting}>
-            {connecting ? 'Verifying…' : 'Connect GitHub'}
-          </button>
-        </form>
-
-        <label className="field sources__since">
-          <span className="field__label">
-            Backfill from <span className="field__optional">optional</span>
-          </span>
-          <input
-            className="field__input"
-            type="date"
-            value={since}
-            onChange={(e) => setSince(e.target.value)}
-          />
-          <span className="field__help">
-            Leave empty to continue from the last successful sync, or ten years back on a
-            first run. Set a date to reach further back.
-          </span>
-        </label>
-
-        <ul className="sources">
-          {connectors.map((source) => {
-            const report = reports[source.id]
-            const failure = syncErrors[source.id] || source.last_error
-            return (
-              <li key={source.id} className="source">
-                <div className="source__head">
-                  <span className="source__label">{source.label}</span>
-                  <span className="badge">{source.mode}</span>
-                </div>
-                <div className="source__meta">
-                  {source.mode === 'pull' ? relative(source.last_synced_at) : 'receives pushes'}
-                  {source.external_account_id && ` · ${source.external_account_id}`}
-                </div>
-
-                {source.mode === 'pull' && (
-                  <button
-                    className="button button--quiet"
-                    onClick={() => void handleSync(source.id)}
-                    disabled={syncing === source.id}
+              {useEnvVar ? (
+                <Field.Root>
+                  <Field.Label>Variable name</Field.Label>
+                  <InputGroup
+                    startElement={
+                      <Text fontFamily="mono" fontSize="sm" color="fg.subtle">
+                        env:
+                      </Text>
+                    }
                   >
-                    {syncing === source.id ? 'Syncing…' : 'Sync now'}
-                  </button>
-                )}
+                    <Input
+                      // Clears the `env:` prefix, which is wider than the
+                      // padding an icon-sized start element gets.
+                      ps="12"
+                      value={envVar}
+                      onChange={(e) => setEnvVar(e.target.value)}
+                      placeholder="GITHUB_TOKEN"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                  </InputGroup>
+                </Field.Root>
+              ) : (
+                <Field.Root>
+                  <Field.Label>Personal access token</Field.Label>
+                  <Input
+                    type="password"
+                    value={token}
+                    onChange={(e) => setToken(e.target.value)}
+                    placeholder="github_pat_…"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </Field.Root>
+              )}
 
-                {report && <p className="source__report">{summarise(report)}</p>}
-                {report?.notes?.map((note) => (
-                  <p key={note} className="alert">
-                    {note}
-                  </p>
-                ))}
-                {failure && <p className="alert">{failure}</p>}
-              </li>
-            )
-          })}
-        </ul>
-      </section>
+              {selfHost && (
+                <Checkbox.Root
+                  checked={useEnvVar}
+                  onCheckedChange={(details) => setUseEnvVar(details.checked === true)}
+                  size="sm"
+                >
+                  <Checkbox.HiddenInput />
+                  <Checkbox.Control />
+                  <Checkbox.Label color="fg.subtle" fontSize="xs">
+                    Use an environment variable instead (self-hosted only)
+                  </Checkbox.Label>
+                </Checkbox.Root>
+              )}
 
-      <CalendarConnection />
+              {connectError && (
+                <Alert.Root status="error">
+                  <Alert.Indicator />
+                  <Alert.Title>{connectError}</Alert.Title>
+                </Alert.Root>
+              )}
+
+              <Button
+                type="submit"
+                variant="outline"
+                size="sm"
+                alignSelf="start"
+                loading={connecting}
+                loadingText="Verifying…"
+              >
+                Connect GitHub
+              </Button>
+            </Stack>
+
+            <Box mt="6" maxW="xs">
+              <DateField
+                label={
+                  <>
+                    Backfill from{' '}
+                    <Text as="span" color="fg.subtle">
+                      optional
+                    </Text>
+                  </>
+                }
+                value={since}
+                onChange={setSince}
+              />
+              <Text mt="2" fontSize="xs" color="fg.subtle">
+                Leave empty to continue from the last successful sync, or ten years back on
+                a first run. Set a date to reach further back.
+              </Text>
+            </Box>
+
+            <Stack as="ul" listStyleType="none" mt="6" gap="3">
+              {connectors.map((source) => {
+                const report = reports[source.id]
+                const failure = syncErrors[source.id] || source.last_error
+                return (
+                  <Stack
+                    as="li"
+                    key={source.id}
+                    gap="2"
+                    alignItems="start"
+                    p="3"
+                    bg="bg.muted"
+                    borderRadius="l2"
+                  >
+                    <HStack gap="2">
+                      <Text fontSize="sm">{source.label}</Text>
+                      <Badge variant="outline" fontFamily="mono" fontSize="xs">
+                        {source.mode}
+                      </Badge>
+                    </HStack>
+
+                    <Text fontSize="xs" color="fg.subtle">
+                      {source.mode === 'pull'
+                        ? relative(source.last_synced_at)
+                        : 'receives pushes'}
+                      {source.external_account_id && ` · ${source.external_account_id}`}
+                    </Text>
+
+                    {source.mode === 'pull' && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handleSync(source.id)}
+                        loading={syncing === source.id}
+                        loadingText="Syncing…"
+                      >
+                        Sync now
+                      </Button>
+                    )}
+
+                    {report && (
+                      <Text
+                        fontSize="xs"
+                        color="fg.muted"
+                        fontVariantNumeric="tabular-nums"
+                      >
+                        {summarise(report)}
+                      </Text>
+                    )}
+
+                    {report?.notes?.map((note) => (
+                      <Alert.Root key={note} status="info" size="sm">
+                        <Alert.Indicator />
+                        <Alert.Title>{note}</Alert.Title>
+                      </Alert.Root>
+                    ))}
+
+                    {failure && (
+                      <Alert.Root status="error" size="sm">
+                        <Alert.Indicator />
+                        <Alert.Title>{failure}</Alert.Title>
+                      </Alert.Root>
+                    )}
+                  </Stack>
+                )
+              })}
+            </Stack>
+          </Card.Body>
+        </Card.Root>
+
+        <CalendarConnection />
+      </Stack>
     </>
   )
 }
