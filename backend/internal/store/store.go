@@ -364,6 +364,42 @@ func (s *Store) UpsertEvent(ctx context.Context, e core.Event) (created bool, er
 	return created, err
 }
 
+// SoftDeleteEvent hides an event and makes the hiding survive re-sync.
+//
+// The tombstone is the whole point: UpsertEvent deliberately leaves deleted_at
+// out of its ON CONFLICT set, so the next sync updates the title and payload
+// of a deleted row without resurrecting it. A hard delete would achieve the
+// opposite — the row would come straight back on the next poll, and would take
+// its annotations and arc membership with it on the way out.
+//
+// Returns how many arcs it was filed into, so the person is told what else
+// just changed rather than discovering it later.
+func (s *Store) SoftDeleteEvent(ctx context.Context, id uuid.UUID) (filedIn int, err error) {
+	err = s.db.QueryRow(ctx, `
+		update events set deleted_at = now()
+		where id = $1 and deleted_at is null
+		returning (select count(*) from arc_events ae where ae.event_id = events.id)`, id,
+	).Scan(&filedIn)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return filedIn, err
+}
+
+// RestoreEvent lifts the tombstone. Arc membership was never removed, so an
+// event comes back filed exactly where it was.
+func (s *Store) RestoreEvent(ctx context.Context, id uuid.UUID) error {
+	tag, err := s.db.Exec(ctx,
+		`update events set deleted_at = null where id = $1 and deleted_at is not null`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // ── reads ────────────────────────────────────────────────────────────────
 
 type EventRow struct {

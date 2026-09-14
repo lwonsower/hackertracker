@@ -26,6 +26,9 @@ func (a *API) arcRoutes() map[string]http.HandlerFunc {
 		"GET /api/arcs/{id}/candidates":          a.handleArcCandidates,
 		"POST /api/arcs/{id}/events":             a.handleAttachEvents,
 		"DELETE /api/arcs/{id}/events/{eventID}": a.handleDetachEvent,
+		"GET /api/arcs/{id}/arc-candidates":      a.handleArcCandidateArcs,
+		"POST /api/arcs/{id}/arcs":               a.handleAttachArcs,
+		"DELETE /api/arcs/{id}/arcs/{arcID}":     a.handleDetachArc,
 	}
 }
 
@@ -50,14 +53,18 @@ func decodeBody(w http.ResponseWriter, r *http.Request, into any) bool {
 
 func (a *API) handleListArcs(w http.ResponseWriter, r *http.Request) {
 	var arcs []store.ArcRow
+	var links []store.ArcLink
 	if ok := a.scope(w, r, func(st *store.Store) error {
 		var err error
-		arcs, err = st.ListArcs(r.Context())
+		if arcs, err = st.ListArcs(r.Context()); err != nil {
+			return err
+		}
+		links, err = st.ArcLinks(r.Context())
 		return err
 	}); !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"arcs": arcs})
+	writeJSON(w, http.StatusOK, map[string]any{"arcs": arcs, "links": links})
 }
 
 func (a *API) handleCreateArc(w http.ResponseWriter, r *http.Request) {
@@ -89,8 +96,8 @@ func (a *API) handleGetArc(w http.ResponseWriter, r *http.Request) {
 	var arc store.Arc
 	var entries []store.ArcEntry
 	var events []store.ArcEventRow
-	var children []store.ArcRow
-	var ancestors []store.Arc
+	var evidenceArcs []store.ArcRow
+	var supports []store.Arc
 	if ok := a.scope(w, r, func(st *store.Store) error {
 		var err error
 		if arc, err = st.ArcByID(r.Context(), id); err != nil {
@@ -102,17 +109,17 @@ func (a *API) handleGetArc(w http.ResponseWriter, r *http.Request) {
 		if events, err = st.ListArcEvents(r.Context(), id); err != nil {
 			return err
 		}
-		if children, err = st.Children(r.Context(), id); err != nil {
+		if evidenceArcs, err = st.EvidenceArcs(r.Context(), id); err != nil {
 			return err
 		}
-		ancestors, err = st.Ancestors(r.Context(), id)
+		supports, err = st.Supports(r.Context(), id)
 		return err
 	}); !ok {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"arc": arc, "entries": entries, "events": events,
-		"children": children, "ancestors": ancestors,
+		"evidence_arcs": evidenceArcs, "supports": supports,
 	})
 }
 
@@ -234,6 +241,81 @@ func (a *API) handleAttachEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"attached": attached, "events": events})
+}
+
+func (a *API) handleArcCandidateArcs(w http.ResponseWriter, r *http.Request) {
+	id, ok := arcID(w, r)
+	if !ok {
+		return
+	}
+	var arcs []store.ArcRow
+	if ok := a.scope(w, r, func(st *store.Store) error {
+		var err error
+		arcs, err = st.CandidateArcs(r.Context(), id, r.URL.Query().Get("q"))
+		return err
+	}); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"arcs": arcs})
+}
+
+// handleAttachArcs files arcs into this one as evidence. Picks that would
+// close a loop are reported rather than failing the batch, so one bad choice
+// does not discard the good ones.
+func (a *API) handleAttachArcs(w http.ResponseWriter, r *http.Request) {
+	id, ok := arcID(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		ArcIDs []uuid.UUID `json:"arc_ids"`
+	}
+	if !decodeBody(w, r, &in) {
+		return
+	}
+	if len(in.ArcIDs) > maxAttachBatch {
+		writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("at most %d arcs at a time", maxAttachBatch))
+		return
+	}
+
+	var attached int
+	var refused []string
+	var arcs []store.ArcRow
+	if ok := a.scope(w, r, func(st *store.Store) error {
+		var err error
+		if attached, refused, err = st.AttachArcs(r.Context(), id, in.ArcIDs); err != nil {
+			return err
+		}
+		arcs, err = st.EvidenceArcs(r.Context(), id)
+		return err
+	}); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"attached": attached, "refused": refused, "evidence_arcs": arcs,
+	})
+}
+
+func (a *API) handleDetachArc(w http.ResponseWriter, r *http.Request) {
+	id, ok := arcID(w, r)
+	if !ok {
+		return
+	}
+	evidenceID, err := uuid.Parse(r.PathValue("arcID"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "not a valid arc id")
+		return
+	}
+
+	// Unfiling removes the link only. The arc keeps its own narrative,
+	// evidence and place in the list.
+	if ok := a.scope(w, r, func(st *store.Store) error {
+		return st.DetachArc(r.Context(), id, evidenceID)
+	}); !ok {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) handleDetachEvent(w http.ResponseWriter, r *http.Request) {

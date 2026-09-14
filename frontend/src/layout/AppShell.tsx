@@ -1,3 +1,4 @@
+import { Box, Button, Flex, Grid, Link as ChakraLink, Stack, Text } from '@chakra-ui/react'
 import { useEffect, useState } from 'react'
 import { Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom'
 
@@ -43,50 +44,125 @@ export default function AppShell() {
   }
 
   return (
-    <div className="app">
-      <header className="sidebar">
-        <NavLink to="/" className="wordmark">
-          hacker tracker
-        </NavLink>
+    <Grid
+      minH="100vh"
+      templateColumns={{ base: 'minmax(0, 1fr)', md: '13rem minmax(0, 1fr)' }}
+    >
+      {/* A bar across the top on a narrow screen, a column beside the page on a
+          wide one. */}
+      <Box
+        as="header"
+        display="flex"
+        flexWrap="wrap"
+        alignItems="center"
+        gap="4"
+        px="6"
+        py="4"
+        borderBottomWidth="1px"
+        md={{
+          display: 'block',
+          position: 'sticky',
+          top: 0,
+          alignSelf: 'start',
+          height: '100vh',
+          py: '8',
+          borderBottomWidth: 0,
+          borderRightWidth: '1px',
+        }}
+      >
+        <ChakraLink
+          asChild
+          display="block"
+          fontSize="lg"
+          letterSpacing="0.08em"
+          color="fg"
+          textDecoration="none"
+          _hover={{ textDecoration: 'none' }}
+        >
+          <NavLink to="/">hacker tracker</NavLink>
+        </ChakraLink>
 
         {/* Capture lives in the shell rather than on the timeline, because the
             thing worth recording occurs to you on whatever page you are on. */}
-        <button className="button sidebar__capture" onClick={() => setCapturing(true)}>
+        <Button
+          size="sm"
+          onClick={() => setCapturing(true)}
+          md={{ width: 'full', marginTop: '6' }}
+        >
           Record something
-        </button>
+        </Button>
 
-        <nav className="nav" aria-label="Main">
+        <Stack
+          as="nav"
+          aria-label="Main"
+          direction="row"
+          gap="1"
+          md={{ display: 'grid', marginTop: '8' }}
+        >
           {NAV.map(({ to, label, end }) => (
-            <NavLink
+            <ChakraLink
+              asChild
               key={to}
-              to={to}
-              end={end}
-              className={({ isActive }) => (isActive ? 'nav__link nav__link--active' : 'nav__link')}
+              px="3"
+              py="2"
+              fontSize="sm"
+              borderRadius="l2"
+              color="fg.muted"
+              textDecoration="none"
+              _hover={{ color: 'fg', bg: 'bg.subtle', textDecoration: 'none' }}
+              // NavLink marks the active route with aria-current, so the state
+              // is read off the link rather than tracked separately.
+              _currentPage={{ color: 'fg', bg: 'bg.muted' }}
             >
-              {label}
-            </NavLink>
+              <NavLink to={to} end={end}>
+                {label}
+              </NavLink>
+            </ChakraLink>
           ))}
-        </nav>
+        </Stack>
 
-        <div className="sidebar__user">
-          <span className="sidebar__email" title={state.user.email}>
+        <Flex
+          alignItems="center"
+          gap="2"
+          ms="auto"
+          minW="0"
+          md={{ display: 'grid', justifyItems: 'start', gap: '1', margin: '2rem 0 0' }}
+        >
+          <Text
+            fontSize="xs"
+            color="fg.subtle"
+            maxW="100%"
+            overflow="hidden"
+            textOverflow="ellipsis"
+            whiteSpace="nowrap"
+            title={state.user.email}
+          >
             {state.user.email}
-          </span>
-          <button className="nav__link sidebar__signout" onClick={() => void handleSignOut()}>
+          </Text>
+          <Button
+            variant="plain"
+            size="sm"
+            px="0"
+            height="auto"
+            justifyContent="start"
+            color="fg.muted"
+            _hover={{ color: 'fg' }}
+            onClick={() => void handleSignOut()}
+          >
             Sign out
-          </button>
-        </div>
-      </header>
+          </Button>
+        </Flex>
+      </Box>
 
-      <main className="content">
+      <Box as="main" minW="0" px="6" pt="8" pb="12">
         <Outlet context={{ captures } satisfies ShellContext} />
-      </main>
+      </Box>
 
       <CaptureDialog
         open={capturing}
         onClose={() => setCapturing(false)}
         onSaved={() => setCaptures((n) => n + 1)}
       />
-    </div>
+    </Grid>
   )
 }

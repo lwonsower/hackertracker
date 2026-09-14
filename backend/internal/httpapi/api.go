@@ -63,6 +63,8 @@ func (a *API) Routes(mux *http.ServeMux, protect func(http.Handler) http.Handler
 		"GET /api/me":                         a.handleMe,
 		"POST /api/events":                    a.handleCreateEvent,
 		"GET /api/events":                     a.handleListEvents,
+		"DELETE /api/events/{id}":             a.handleDeleteEvent,
+		"POST /api/events/{id}/restore":       a.handleRestoreEvent,
 		"GET /api/source-accounts":            a.handleListSourceAccounts,
 		"POST /api/source-accounts":           a.handleCreateSourceAccount,
 		"POST /api/source-accounts/{id}/sync": a.handleSync,
@@ -302,6 +304,41 @@ func (a *API) handleCreateEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, res)
+}
+
+// handleDeleteEvent hides an event without removing the row, so the next sync
+// does not hand it straight back.
+func (a *API) handleDeleteEvent(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "not a valid event id")
+		return
+	}
+
+	var filedIn int
+	if ok := a.scope(w, r, func(st *store.Store) error {
+		var err error
+		filedIn, err = st.SoftDeleteEvent(r.Context(), id)
+		return err
+	}); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "filed_in": filedIn})
+}
+
+func (a *API) handleRestoreEvent(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "not a valid event id")
+		return
+	}
+
+	if ok := a.scope(w, r, func(st *store.Store) error {
+		return st.RestoreEvent(r.Context(), id)
+	}); !ok {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ── reads ────────────────────────────────────────────────────────────────

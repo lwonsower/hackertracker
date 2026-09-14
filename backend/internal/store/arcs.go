@@ -32,33 +32,42 @@ func dateOf(t *time.Time) *Date {
 }
 
 type Arc struct {
-	ID uuid.UUID `json:"id"`
-	// ParentID is the arc this one supports. A promotion case holds
-	// "cross-team influence", which holds the work itself.
-	ParentID  *uuid.UUID `json:"parent_id,omitempty"`
-	Title     string     `json:"title"`
-	Status    string     `json:"status"`
-	Summary   string     `json:"summary,omitempty"`
-	StartedAt *Date      `json:"started_at,omitempty"`
-	TargetAt  *Date      `json:"target_at,omitempty"`
-	EndedAt   *Date      `json:"ended_at,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
+	ID        uuid.UUID `json:"id"`
+	Title     string    `json:"title"`
+	Status    string    `json:"status"`
+	Summary   string    `json:"summary,omitempty"`
+	StartedAt *Date     `json:"started_at,omitempty"`
+	TargetAt  *Date     `json:"target_at,omitempty"`
+	EndedAt   *Date     `json:"ended_at,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // ArcRow carries the counts the list view shows, so listing arcs does not
 // mean fetching every arc's events to say how many there are.
 type ArcRow struct {
 	Arc
-	EventCount  int        `json:"event_count"`
-	EntryCount  int        `json:"entry_count"`
-	ChildCount  int        `json:"child_count"`
-	LastEventAt *time.Time `json:"last_event_at,omitempty"`
+	EventCount int `json:"event_count"`
+	EntryCount int `json:"entry_count"`
+	// ArcCount is how many arcs are filed into this one as evidence.
+	ArcCount int `json:"arc_count"`
+	// SupportsCount is how many arcs this one is filed into. An arc can
+	// support several at once, which is the whole reason this is a link and
+	// not a parent.
+	SupportsCount int        `json:"supports_count"`
+	LastEventAt   *time.Time `json:"last_event_at,omitempty"`
 }
 
-// Empty reports an arc that supports nothing yet — no events, no sub-arcs.
-// This is the gap the goals tier existed to show: a named thing you said
-// mattered, with nothing behind it.
-func (r ArcRow) Empty() bool { return r.EventCount == 0 && r.ChildCount == 0 }
+// Empty reports an arc holding nothing yet — no events, no arcs. This is the
+// gap the goals tier existed to show: a named thing you said mattered, with
+// nothing behind it.
+func (r ArcRow) Empty() bool { return r.EventCount == 0 && r.ArcCount == 0 }
+
+// ArcLink is one evidence edge, flat over the wire so the client can build the
+// graph without the server walking it.
+type ArcLink struct {
+	ArcID      uuid.UUID `json:"arc_id"`
+	EvidenceID uuid.UUID `json:"evidence_id"`
+}
 
 type ArcEntry struct {
 	ID         uuid.UUID `json:"id"`
@@ -72,9 +81,6 @@ type ArcEntry struct {
 // ArcInput is the writable half of an arc. Dates arrive as YYYY-MM-DD, which
 // is exactly what <input type="date"> produces; empty means unset.
 type ArcInput struct {
-	// ParentID is "" for a top-level arc. A whole-record replace means an
-	// emptied value detaches it, which a merge could not express.
-	ParentID  string `json:"parent_id"`
 	Title     string `json:"title"`
 	Status    string `json:"status"`
 	Summary   string `json:"summary"`
@@ -108,12 +114,6 @@ func (in *ArcInput) clean() error {
 	if !arcStatuses[in.Status] {
 		return core.ValidationError{Msg: fmt.Sprintf("status %q must be open, done or dropped", in.Status)}
 	}
-	in.ParentID = strings.TrimSpace(in.ParentID)
-	if in.ParentID != "" {
-		if _, err := uuid.Parse(in.ParentID); err != nil {
-			return core.ValidationError{Msg: "parent_id is not a valid arc id"}
-		}
-	}
 	for label, value := range map[string]*string{
 		"started_at": &in.StartedAt, "target_at": &in.TargetAt, "ended_at": &in.EndedAt,
 	} {
@@ -128,12 +128,17 @@ func (in *ArcInput) clean() error {
 	return nil
 }
 
-const arcCols = `id, parent_id, title, status, coalesce(summary, ''), started_at, target_at, ended_at, created_at`
+const arcCols = `id, title, status, coalesce(summary, ''), started_at, target_at, ended_at, created_at`
+
+// arcColsA is the same list qualified to the `a` alias, for the reads that
+// join arc_arcs — which has its own created_at and makes the bare name
+// ambiguous. RETURNING cannot use an alias, so both spellings are needed.
+const arcColsA = `a.id, a.title, a.status, coalesce(a.summary, ''), a.started_at, a.target_at, a.ended_at, a.created_at`
 
 func scanArc(s scannable) (Arc, error) {
 	var a Arc
 	var started, target, ended *time.Time
-	err := s.Scan(&a.ID, &a.ParentID, &a.Title, &a.Status, &a.Summary, &started, &target, &ended, &a.CreatedAt)
+	err := s.Scan(&a.ID, &a.Title, &a.Status, &a.Summary, &started, &target, &ended, &a.CreatedAt)
 	a.StartedAt, a.TargetAt, a.EndedAt = dateOf(started), dateOf(target), dateOf(ended)
 	return a, err
 }
@@ -142,46 +147,54 @@ func (s *Store) CreateArc(ctx context.Context, in ArcInput) (Arc, error) {
 	if err := in.clean(); err != nil {
 		return Arc{}, err
 	}
-	// Loading the parent first makes "that arc is not yours" a 404 rather than
-	// a foreign-key violation surfacing as a 500.
-	if in.ParentID != "" {
-		if _, err := s.ArcByID(ctx, uuid.MustParse(in.ParentID)); err != nil {
-			return Arc{}, err
-		}
-	}
 	return scanArc(s.db.QueryRow(ctx, `
-		insert into arcs (account_id, parent_id, title, status, summary, started_at, target_at, ended_at)
-		values ($1, nullif($2, '')::uuid, $3, $4, nullif($5, ''), nullif($6, '')::date, nullif($7, '')::date, nullif($8, '')::date)
+		insert into arcs (account_id, title, status, summary, started_at, target_at, ended_at)
+		values ($1, $2, $3, nullif($4, ''), nullif($5, '')::date, nullif($6, '')::date, nullif($7, '')::date)
 		returning `+arcCols,
-		s.accountID, in.ParentID, in.Title, in.Status, in.Summary, in.StartedAt, in.TargetAt, in.EndedAt))
+		s.accountID, in.Title, in.Status, in.Summary, in.StartedAt, in.TargetAt, in.EndedAt))
 }
 
-// wouldCycle walks up from a proposed parent looking for the arc being moved.
-// The database can only refuse an arc parented to itself; a longer loop —
-// A under B under A — has to be caught here, and an unchecked one would make
-// every recursive read hang.
-func (s *Store) wouldCycle(ctx context.Context, arcID, parentID uuid.UUID) (bool, error) {
-	const maxDepth = 64
-	at := parentID
-	for i := 0; i < maxDepth; i++ {
-		if at == arcID {
+// reaches reports whether `from` can get to `target` by following evidence
+// links upward — that is, whether target already sits somewhere above from.
+//
+// A link graph has no single chain to walk, so this is a breadth-first search
+// over everything `from` supports. An unchecked loop would not corrupt data;
+// it would make every recursive read spin, which is worse than an error.
+func (s *Store) reaches(ctx context.Context, from, target uuid.UUID) (bool, error) {
+	seen := map[uuid.UUID]bool{from: true}
+	queue := []uuid.UUID{from}
+
+	for len(queue) > 0 {
+		at := queue[0]
+		queue = queue[1:]
+		if at == target {
 			return true, nil
 		}
-		var next *uuid.UUID
-		err := s.db.QueryRow(ctx, `select parent_id from arcs where id = $1`, at).Scan(&next)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return false, ErrNotFound
-		}
+		rows, err := s.db.Query(ctx, `select arc_id from arc_arcs where evidence_id = $1`, at)
 		if err != nil {
 			return false, err
 		}
-		if next == nil {
-			return false, nil
+		var next []uuid.UUID
+		for rows.Next() {
+			var id uuid.UUID
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return false, err
+			}
+			next = append(next, id)
 		}
-		at = *next
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return false, err
+		}
+		for _, id := range next {
+			if !seen[id] {
+				seen[id] = true
+				queue = append(queue, id)
+			}
+		}
 	}
-	// Deeper than anything real; treat it as a loop rather than spin.
-	return true, nil
+	return false, nil
 }
 
 // UpdateArc replaces the writable fields wholesale, so clearing a date is
@@ -190,28 +203,14 @@ func (s *Store) UpdateArc(ctx context.Context, id uuid.UUID, in ArcInput) (Arc, 
 	if err := in.clean(); err != nil {
 		return Arc{}, err
 	}
-	if in.ParentID != "" {
-		parent := uuid.MustParse(in.ParentID)
-		if parent == id {
-			return Arc{}, core.ValidationError{Msg: "an arc cannot be its own parent"}
-		}
-		looped, err := s.wouldCycle(ctx, id, parent)
-		if err != nil {
-			return Arc{}, err
-		}
-		if looped {
-			return Arc{}, core.ValidationError{Msg: "that would put the arc inside itself"}
-		}
-	}
 	a, err := scanArc(s.db.QueryRow(ctx, `
-		update arcs set parent_id = nullif($2, '')::uuid,
-		                title = $3, status = $4, summary = nullif($5, ''),
-		                started_at = nullif($6, '')::date,
-		                target_at  = nullif($7, '')::date,
-		                ended_at   = nullif($8, '')::date
+		update arcs set title = $2, status = $3, summary = nullif($4, ''),
+		                started_at = nullif($5, '')::date,
+		                target_at  = nullif($6, '')::date,
+		                ended_at   = nullif($7, '')::date
 		where id = $1
 		returning `+arcCols,
-		id, in.ParentID, in.Title, in.Status, in.Summary, in.StartedAt, in.TargetAt, in.EndedAt))
+		id, in.Title, in.Status, in.Summary, in.StartedAt, in.TargetAt, in.EndedAt))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Arc{}, ErrNotFound
 	}
@@ -230,10 +229,13 @@ func (s *Store) ArcByID(ctx context.Context, id uuid.UUID) (Arc, error) {
 // ones you file against.
 func (s *Store) ListArcs(ctx context.Context) ([]ArcRow, error) {
 	rows, err := s.db.Query(ctx, `
-		select `+arcCols+`,
-		       (select count(*) from arc_events ae where ae.arc_id = a.id),
+		select `+arcColsA+`,
+		       (select count(*) from arc_events ae
+		          join live_events le on le.id = ae.event_id
+		         where ae.arc_id = a.id),
 		       (select count(*) from arc_entries en where en.arc_id = a.id),
-		       (select count(*) from arcs c where c.parent_id = a.id),
+		       (select count(*) from arc_arcs l where l.arc_id = a.id),
+		       (select count(*) from arc_arcs l where l.evidence_id = a.id),
 		       (select max(e.occurred_at) from arc_events ae
 		          join live_events e on e.id = ae.event_id
 		         where ae.arc_id = a.id)
@@ -248,8 +250,8 @@ func (s *Store) ListArcs(ctx context.Context) ([]ArcRow, error) {
 	for rows.Next() {
 		var r ArcRow
 		var started, target, ended *time.Time
-		if err := rows.Scan(&r.ID, &r.ParentID, &r.Title, &r.Status, &r.Summary, &started, &target, &ended,
-			&r.CreatedAt, &r.EventCount, &r.EntryCount, &r.ChildCount, &r.LastEventAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Title, &r.Status, &r.Summary, &started, &target, &ended,
+			&r.CreatedAt, &r.EventCount, &r.EntryCount, &r.ArcCount, &r.SupportsCount, &r.LastEventAt); err != nil {
 			return nil, err
 		}
 		r.StartedAt, r.TargetAt, r.EndedAt = dateOf(started), dateOf(target), dateOf(ended)
@@ -258,22 +260,26 @@ func (s *Store) ListArcs(ctx context.Context) ([]ArcRow, error) {
 	return out, rows.Err()
 }
 
-// Children returns the arcs directly under this one, with the same counts the
-// list view uses so an empty sub-arc is visible as a gap from its parent.
-func (s *Store) Children(ctx context.Context, parentID uuid.UUID) ([]ArcRow, error) {
+// EvidenceArcs returns the arcs filed into this one, with the same counts the
+// list view uses so an empty one is visible as a gap from where it hangs.
+func (s *Store) EvidenceArcs(ctx context.Context, arcID uuid.UUID) ([]ArcRow, error) {
 	rows, err := s.db.Query(ctx, `
-		select `+arcCols+`,
-		       (select count(*) from arc_events ae where ae.arc_id = a.id),
+		select `+arcColsA+`,
+		       (select count(*) from arc_events ae
+		          join live_events le on le.id = ae.event_id
+		         where ae.arc_id = a.id),
 		       (select count(*) from arc_entries en where en.arc_id = a.id),
-		       (select count(*) from arcs c where c.parent_id = a.id),
+		       (select count(*) from arc_arcs l where l.arc_id = a.id),
+		       (select count(*) from arc_arcs l where l.evidence_id = a.id),
 		       (select max(e.occurred_at) from arc_events ae
 		          join live_events e on e.id = ae.event_id
 		         where ae.arc_id = a.id)
-		from arcs a
-		where a.parent_id = $1
-		order by (status = 'open') desc, title`, parentID)
+		from arc_arcs link
+		join arcs a on a.id = link.evidence_id
+		where link.arc_id = $1
+		order by (a.status = 'open') desc, a.title`, arcID)
 	if err != nil {
-		return nil, fmt.Errorf("list child arcs: %w", err)
+		return nil, fmt.Errorf("list arc evidence: %w", err)
 	}
 	defer rows.Close()
 
@@ -281,8 +287,8 @@ func (s *Store) Children(ctx context.Context, parentID uuid.UUID) ([]ArcRow, err
 	for rows.Next() {
 		var r ArcRow
 		var started, target, ended *time.Time
-		if err := rows.Scan(&r.ID, &r.ParentID, &r.Title, &r.Status, &r.Summary, &started, &target, &ended,
-			&r.CreatedAt, &r.EventCount, &r.EntryCount, &r.ChildCount, &r.LastEventAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Title, &r.Status, &r.Summary, &started, &target, &ended,
+			&r.CreatedAt, &r.EventCount, &r.EntryCount, &r.ArcCount, &r.SupportsCount, &r.LastEventAt); err != nil {
 			return nil, err
 		}
 		r.StartedAt, r.TargetAt, r.EndedAt = dateOf(started), dateOf(target), dateOf(ended)
@@ -291,28 +297,51 @@ func (s *Store) Children(ctx context.Context, parentID uuid.UUID) ([]ArcRow, err
 	return out, rows.Err()
 }
 
-// Ancestors walks from an arc up to its root, nearest parent first, so the
-// detail page can show where it sits without a second round trip per level.
-func (s *Store) Ancestors(ctx context.Context, id uuid.UUID) ([]Arc, error) {
-	out := []Arc{}
-	at, err := s.ArcByID(ctx, id)
+// Supports returns the arcs this one is filed into. There can be several —
+// one piece of work legitimately backs a promotion case and a reliability
+// push at the same time — so this is a list, not a chain.
+func (s *Store) Supports(ctx context.Context, id uuid.UUID) ([]Arc, error) {
+	rows, err := s.db.Query(ctx, `
+		select `+arcColsA+`
+		from arc_arcs link
+		join arcs a on a.id = link.arc_id
+		where link.evidence_id = $1
+		order by a.title`, id)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list supported arcs: %w", err)
 	}
-	for i := 0; i < 64 && at.ParentID != nil; i++ {
-		parent, err := s.ArcByID(ctx, *at.ParentID)
-		if errors.Is(err, ErrNotFound) {
-			// Row-level security hides another account's arc, and a parent
-			// that is not visible is simply where the chain stops.
-			return out, nil
-		}
+	defer rows.Close()
+
+	out := []Arc{}
+	for rows.Next() {
+		a, err := scanArc(rows)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, parent)
-		at = parent
+		out = append(out, a)
 	}
-	return out, nil
+	return out, rows.Err()
+}
+
+// ArcLinks is every edge in the account's graph. The list view builds its own
+// tree from these: a recursive query would be the wrong trade at this size,
+// and a client-side walk can still show an arc whose parent it cannot see.
+func (s *Store) ArcLinks(ctx context.Context) ([]ArcLink, error) {
+	rows, err := s.db.Query(ctx, `select arc_id, evidence_id from arc_arcs`)
+	if err != nil {
+		return nil, fmt.Errorf("list arc links: %w", err)
+	}
+	defer rows.Close()
+
+	out := []ArcLink{}
+	for rows.Next() {
+		var l ArcLink
+		if err := rows.Scan(&l.ArcID, &l.EvidenceID); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
 }
 
 // ── entries ──────────────────────────────────────────────────────────────
@@ -408,6 +437,125 @@ func (s *Store) DetachEvent(ctx context.Context, arcID, eventID uuid.UUID) error
 		return ErrNotFound
 	}
 	return nil
+}
+
+// AttachArcs files arcs into another as evidence, in bulk like events.
+//
+// Each link is checked separately: attaching five arcs where one would close a
+// loop refuses that one and takes the rest, because an all-or-nothing batch
+// would make a single bad pick discard four good ones.
+func (s *Store) AttachArcs(ctx context.Context, arcID uuid.UUID, evidenceIDs []uuid.UUID) (int, []string, error) {
+	if _, err := s.ArcByID(ctx, arcID); err != nil {
+		return 0, nil, err
+	}
+
+	attached := 0
+	refused := []string{}
+	for _, id := range evidenceIDs {
+		if id == arcID {
+			refused = append(refused, "an arc cannot be evidence for itself")
+			continue
+		}
+		// Refuse if this arc already sits somewhere above the candidate:
+		// filing it in would close a loop.
+		looped, err := s.reaches(ctx, arcID, id)
+		if err != nil {
+			return attached, refused, err
+		}
+		if looped {
+			var title string
+			if err := s.db.QueryRow(ctx, `select title from arcs where id = $1`, id).Scan(&title); err != nil {
+				title = "that arc"
+			}
+			refused = append(refused, fmt.Sprintf("%q already contains this one", title))
+			continue
+		}
+
+		tag, err := s.db.Exec(ctx, `
+			insert into arc_arcs (account_id, arc_id, evidence_id)
+			select $1, $2, a.id from arcs a where a.id = $3
+			on conflict do nothing`, s.accountID, arcID, id)
+		if err != nil {
+			return attached, refused, err
+		}
+		attached += int(tag.RowsAffected())
+	}
+	return attached, refused, nil
+}
+
+// DetachArc unfiles an arc. The arc itself is untouched — it stays whatever
+// line of work it always was.
+func (s *Store) DetachArc(ctx context.Context, arcID, evidenceID uuid.UUID) error {
+	tag, err := s.db.Exec(ctx,
+		`delete from arc_arcs where arc_id = $1 and evidence_id = $2`, arcID, evidenceID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// CandidateArcs finds arcs that could be filed into this one: not itself, not
+// already filed here, and not anything this arc already sits inside.
+func (s *Store) CandidateArcs(ctx context.Context, arcID uuid.UUID, query string) ([]ArcRow, error) {
+	if _, err := s.ArcByID(ctx, arcID); err != nil {
+		return nil, err
+	}
+	query = strings.TrimSpace(query)
+
+	rows, err := s.db.Query(ctx, `
+		select `+arcColsA+`,
+		       (select count(*) from arc_events ae
+		          join live_events le on le.id = ae.event_id
+		         where ae.arc_id = a.id),
+		       (select count(*) from arc_entries en where en.arc_id = a.id),
+		       (select count(*) from arc_arcs l where l.arc_id = a.id),
+		       (select count(*) from arc_arcs l where l.evidence_id = a.id),
+		       (select max(e.occurred_at) from arc_events ae
+		          join live_events e on e.id = ae.event_id
+		         where ae.arc_id = a.id)
+		from arcs a
+		where a.id <> $1
+		  and not exists (select 1 from arc_arcs l
+		                   where l.arc_id = $1 and l.evidence_id = a.id)
+		  and ($2 = '' or a.title ilike $3 or coalesce(a.summary, '') ilike $3)
+		order by (a.status = 'open') desc, a.title
+		limit 100`, arcID, query, "%"+likeEscape(query)+"%")
+	if err != nil {
+		return nil, fmt.Errorf("list candidate arcs: %w", err)
+	}
+	defer rows.Close()
+
+	out := []ArcRow{}
+	for rows.Next() {
+		var r ArcRow
+		var started, target, ended *time.Time
+		if err := rows.Scan(&r.ID, &r.Title, &r.Status, &r.Summary, &started, &target, &ended,
+			&r.CreatedAt, &r.EventCount, &r.EntryCount, &r.ArcCount, &r.SupportsCount, &r.LastEventAt); err != nil {
+			return nil, err
+		}
+		r.StartedAt, r.TargetAt, r.EndedAt = dateOf(started), dateOf(target), dateOf(ended)
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Anything this arc already sits inside would close a loop; drop those
+	// here rather than offering a pick that can only be refused.
+	kept := out[:0]
+	for _, candidate := range out {
+		looped, err := s.reaches(ctx, arcID, candidate.ID)
+		if err != nil {
+			return nil, err
+		}
+		if !looped {
+			kept = append(kept, candidate)
+		}
+	}
+	return kept, nil
 }
 
 // ── evidence and candidates ──────────────────────────────────────────────
